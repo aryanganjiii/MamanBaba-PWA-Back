@@ -2,6 +2,8 @@
 
 Base URL: `/api/v1`
 
+برای سازگاری با فرانت‌هایی که `VITE_API_BASE_URL` را فقط تا origin تنظیم کرده‌اند، همین route ها بدون prefix نسخه هم فعال هستند؛ مثلا `/auth/request-otp` کنار `/api/v1/auth/request-otp` کار می‌کند.
+
 تمام پاسخ‌های موفق با شکل زیر برمی‌گردند:
 
 ```json

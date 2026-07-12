@@ -45,9 +45,25 @@ class ApiSmokeTest(unittest.TestCase):
 
     def test_health_and_catalog(self):
         self.assertEqual(self.client.get("/api/v1/health").status_code, 200)
+        self.assertEqual(self.client.get("/health").status_code, 200)
         response = self.client.get("/api/v1/catalog/caregiver-registration-options")
         self.assertEqual(response.status_code, 200)
         self.assertIn("skillOptions", response.get_json()["data"])
+
+    def test_root_auth_compatibility_and_preflight(self):
+        preflight = self.client.options(
+            "/auth/request-otp",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+        self.assertEqual(preflight.status_code, 200)
+
+        response = self.client.post("/auth/request-otp", json={"phone": "09121234567"})
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.get_json()["data"]["phone"], "09121234567")
 
     def test_family_home_and_request_flow(self):
         headers = self.auth_headers()

@@ -3,10 +3,18 @@ import os
 import click
 from flask import Flask, send_from_directory
 
-from app.config import Config
 from app.errors import register_error_handlers
 from app.extensions import cors, db, migrate
 from app.routes import api_bp
+from app.routes.auth import bp as auth_bp
+from app.routes.care_requests import bp as care_requests_bp
+from app.routes.caregiver_applications import bp as caregiver_applications_bp
+from app.routes.caregivers import bp as caregivers_bp
+from app.routes.catalog import bp as catalog_bp
+from app.routes.conversations import bp as conversations_bp
+from app.routes.family import bp as family_bp
+from app.routes.notifications import bp as notifications_bp
+from app.routes.payments import bp as payments_bp
 from app.utils.http import success
 
 try:
@@ -17,7 +25,10 @@ except ImportError:  # pragma: no cover
 
 
 def create_app(config_override=None):
-    load_dotenv()
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    load_dotenv(os.path.join(project_root, ".env"), override=True)
+
+    from app.config import Config
 
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_object(Config)
@@ -32,12 +43,21 @@ def create_app(config_override=None):
 
     db.init_app(app)
     migrate.init_app(app, db)
-    cors.init_app(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})
+    cors.init_app(app, resources={r"/*": {"origins": app.config["CORS_ORIGINS"]}})
 
     from app import models  # noqa: F401
 
     register_error_handlers(app)
     app.register_blueprint(api_bp)
+    app.register_blueprint(auth_bp, name="auth_compat")
+    app.register_blueprint(catalog_bp, name="catalog_compat")
+    app.register_blueprint(family_bp, name="family_compat")
+    app.register_blueprint(care_requests_bp, name="care_requests_compat")
+    app.register_blueprint(caregivers_bp, name="caregivers_compat")
+    app.register_blueprint(caregiver_applications_bp, name="caregiver_applications_compat")
+    app.register_blueprint(notifications_bp, name="notifications_compat")
+    app.register_blueprint(conversations_bp, name="conversations_compat")
+    app.register_blueprint(payments_bp, name="payments_compat")
 
     @app.get("/health")
     @app.get("/api/v1/health")
