@@ -1,0 +1,156 @@
+import re
+
+from flask import Blueprint, request
+
+from app.errors import ApiError
+from app.extensions import db
+from app.models.caregiver import CaregiverApplication, CaregiverApplicationFile, CaregiverApplicationItem
+from app.services.catalog_data import CAREGIVER_REGISTRATION_OPTIONS
+from app.services.files import save_upload
+from app.utils.http import success
+from app.utils.validation import as_list, bool_value, normalize_digits, require_fields
+
+bp = Blueprint("caregiver_applications", __name__, url_prefix="/caregiver-applications")
+
+
+def _payload():
+    return request.get_json(silent=True) if request.is_json else request.form
+
+
+def _field(payload, camel, snake=None, default=None):
+    snake = snake or camel
+    return payload.get(camel, payload.get(snake, default))
+
+
+def _list_field(payload, camel, snake=None):
+    if request.is_json:
+        return as_list(_field(payload, camel, snake, []))
+    values = request.form.getlist(camel) or request.form.getlist(snake or camel)
+    if values:
+        result = []
+        for value in values:
+            result.extend(as_list(value))
+        return result
+    return as_list(_field(payload, camel, snake, []))
+
+
+def _money(value):
+    normalized = normalize_digits(value)
+    digits = re.sub(r"\D", "", normalized)
+    return int(digits or 0)
+
+
+@bp.get("/options")
+def options():
+    return success(CAREGIVER_REGISTRATION_OPTIONS)
+
+
+@bp.post("")
+def create_application():
+    payload = _payload() or {}
+    normalized = {
+        "fullName": _field(payload, "fullName", "full_name"),
+        "nationalCode": _field(payload, "nationalCode", "national_code"),
+        "birthDate": _field(payload, "birthDate", "birth_date"),
+        "gender": _field(payload, "gender"),
+        "maritalStatus": _field(payload, "maritalStatus", "marital_status"),
+        "province": _field(payload, "province"),
+        "city": _field(payload, "city"),
+        "experienceLevel": _field(payload, "experienceLevel", "experience_level"),
+        "startTime": _field(payload, "startTime", "start_time", "08:00"),
+        "endTime": _field(payload, "endTime", "end_time", "16:00"),
+        "hourlyRate": _money(_field(payload, "hourlyRate", "hourly_rate", 0)),
+        "expectationNotes": _field(payload, "expectationNotes", "expectation_notes", ""),
+        "aboutMe": _field(payload, "aboutMe", "about_me"),
+        "profileImageReminderSkipped": bool_value(
+            _field(payload, "profileImageReminderSkipped", "profile_image_reminder_skipped", False)
+        ),
+        "acceptedTerms": bool_value(_field(payload, "acceptedTerms", "accepted_terms", False)),
+        "canStayOvernight": bool_value(_field(payload, "canStayOvernight", "can_stay_overnight", False)),
+        "availableOnHolidays": bool_value(_field(payload, "availableOnHolidays", "available_on_holidays", False)),
+    }
+    require_fields(
+        normalized,
+        [
+            "fullName",
+            "nationalCode",
+            "birthDate",
+            "gender",
+            "maritalStatus",
+            "province",
+            "city",
+            "experienceLevel",
+            "hourlyRate",
+            "aboutMe",
+        ],
+    )
+    if not normalized["acceptedTerms"]:
+        raise ApiError("برای ثبت نهایی، قوانین و شرایط باید تایید شود.", 422, "terms_not_accepted")
+
+    profile_image = request.files.get("profileImage") if not request.is_json else None
+    profile_saved = save_upload(profile_image, "profile-images") if profile_image else None
+
+    application = CaregiverApplication(
+        full_name=normalized["fullName"],
+        national_code=normalize_digits(normalized["nationalCode"]),
+        birth_date=normalized["birthDate"],
+        gender=normalized["gender"],
+        marital_status=normalized["maritalStatus"],
+        province=normalized["province"],
+        city=normalized["city"],
+        experience_level=normalized["experienceLevel"],
+        start_time=normalized["startTime"],
+        end_time=normalized["endTime"],
+        can_stay_overnight=normalized["canStayOvernight"],
+        available_on_holidays=normalized["availableOnHolidays"],
+        hourly_rate=normalized["hourlyRate"],
+        expectation_notes=normalized["expectationNotes"],
+        about_me=normalized["aboutMe"],
+        profile_image_url=profile_saved["url"] if profile_saved else _field(payload, "profileImageUrl", "profile_image_url", ""),
+        profile_image_reminder_skipped=normalized["profileImageReminderSkipped"],
+        accepted_terms=normalized["acceptedTerms"],
+        status="pending_review",
+    )
+    db.session.add(application)
+    db.session.flush()
+
+    item_map = {
+        "skills": _list_field(payload, "skills"),
+        "certificates": _list_field(payload, "certificates"),
+        "service_types": _list_field(payload, "serviceTypes", "service_types"),
+        "collaboration_types": _list_field(payload, "collaborationTypes", "collaboration_types"),
+        "available_days": _list_field(payload, "availableDays", "available_days"),
+        "service_areas": _list_field(payload, "serviceAreas", "service_areas"),
+    }
+    required_lists = ["skills", "service_types", "collaboration_types", "available_days", "service_areas"]
+    missing_lists = [key for key in required_lists if not item_map[key]]
+    if missing_lists:
+        raise ApiError("برخی گزینه‌های ضروری ثبت‌نام انتخاب نشده‌اند.", 422, "missing_registration_items", {"items": missing_lists})
+
+    for category, values in item_map.items():
+        for value in values:
+            db.session.add(CaregiverApplicationItem(application_id=application.id, category=category, value=value))
+
+    for file_storage in request.files.getlist("certificateFiles"):
+        saved = save_upload(file_storage, "certificates")
+        if saved:
+            db.session.add(
+                CaregiverApplicationFile(
+                    application_id=application.id,
+                    file_type="certificate",
+                    original_name=saved["original_name"],
+                    stored_name=saved["stored_name"],
+                    url=saved["url"],
+                )
+            )
+
+    db.session.commit()
+    return success(application.to_dict(), status=201, message="درخواست همکاری شما ثبت شد.")
+
+
+@bp.get("/<int:application_id>")
+def application_detail(application_id):
+    application = db.session.get(CaregiverApplication, application_id)
+    if not application:
+        raise ApiError("درخواست همکاری پیدا نشد.", 404, "application_not_found")
+    return success(application.to_dict())
