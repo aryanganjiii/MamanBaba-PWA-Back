@@ -1,6 +1,9 @@
 import unittest
 from io import BytesIO
+from subprocess import CompletedProcess
 from unittest.mock import patch
+from urllib.error import URLError
+from urllib.parse import parse_qs
 
 from app import create_app
 from app.extensions import db
@@ -196,12 +199,35 @@ class KavenegarOtpTest(unittest.TestCase):
 
         request = mocked.call_args.args[0]
         self.assertIn("/verify/lookup.json", request.full_url)
-        self.assertIn("receptor=09121234567", request.full_url)
-        self.assertIn("token=12345", request.full_url)
-        self.assertIn("template=pejixfitwebotp", request.full_url)
+        self.assertEqual(request.get_method(), "POST")
+        payload = parse_qs(request.data.decode("utf-8"))
+        self.assertEqual(payload["receptor"], ["09121234567"])
+        self.assertEqual(payload["token"], ["12345"])
+        self.assertEqual(payload["template"], ["pejixfitwebotp"])
+        self.assertEqual(payload["type"], ["sms"])
         self.assertEqual(result["provider"], "kavenegar")
         self.assertTrue(result["sent"])
         self.assertEqual(result["messageId"], 123)
+
+    def test_verify_lookup_uses_curl_fallback_when_urllib_fails(self):
+        completed = CompletedProcess(
+            args=["curl"],
+            returncode=0,
+            stdout='{"return":{"status":200,"message":"ok"},"entries":[{"messageid":456}]}',
+            stderr="",
+        )
+
+        with patch("app.services.kavenegar.urlopen", side_effect=URLError("blocked")):
+            with patch("app.services.kavenegar.shutil.which", return_value="curl.exe"):
+                with patch("app.services.kavenegar.subprocess.run", return_value=completed) as run:
+                    result = send_verify_lookup("09121234567", "12345")
+
+        command = run.call_args.args[0]
+        self.assertIn("curl.exe", command)
+        self.assertIn("--data-urlencode", command)
+        self.assertIn("receptor=09121234567", command)
+        self.assertTrue(result["sent"])
+        self.assertEqual(result["messageId"], 456)
 
 
 if __name__ == "__main__":

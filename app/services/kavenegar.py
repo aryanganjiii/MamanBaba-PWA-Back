@@ -1,4 +1,6 @@
 import json
+import shutil
+import subprocess
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -38,16 +40,22 @@ def send_otp(phone, code):
 def send_verify_lookup(phone, token):
     api_key, template = _kavenegar_config()
     encoded_api_key = quote(api_key, safe="")
-    query = urlencode(
-        {
-            "receptor": phone,
-            "token": token,
-            "template": template,
-            "type": "sms",
-        }
+    endpoint = f"https://api.kavenegar.com/v1/{encoded_api_key}/verify/lookup.json"
+    params = {
+        "receptor": phone,
+        "token": token,
+        "template": template,
+        "type": current_app.config["KAVENEGAR_VERIFY_TYPE"],
+    }
+    request = Request(
+        endpoint,
+        data=urlencode(params).encode("utf-8"),
+        method="POST",
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
     )
-    url = f"https://api.kavenegar.com/v1/{encoded_api_key}/verify/lookup.json?{query}"
-    request = Request(url, method="GET", headers={"Accept": "application/json"})
 
     try:
         with urlopen(
@@ -58,12 +66,16 @@ def send_verify_lookup(phone, token):
     except HTTPError as exc:
         raise _kavenegar_error(exc.code, exc.read().decode("utf-8", errors="ignore")) from exc
     except URLError as exc:
-        raise ApiError(
-            "اتصال به سرویس کاوه‌نگار برقرار نشد.",
-            502,
-            "kavenegar_connection_error",
-            {"reason": str(exc.reason)},
-        ) from exc
+        if current_app.config["KAVENEGAR_USE_CURL_FALLBACK"]:
+            current_app.logger.warning("Kavenegar urllib failed; trying curl fallback: %s", exc)
+            payload = _send_verify_lookup_with_curl(endpoint, params)
+        else:
+            raise ApiError(
+                "اتصال به سرویس کاوه‌نگار برقرار نشد.",
+                502,
+                "kavenegar_connection_error",
+                {"reason": str(exc.reason)},
+            ) from exc
     except json.JSONDecodeError as exc:
         raise ApiError(
             "پاسخ کاوه‌نگار قابل پردازش نیست.",
@@ -82,6 +94,57 @@ def send_verify_lookup(phone, token):
         "status": status,
         "messageId": entries[0].get("messageid") if entries and isinstance(entries, list) else None,
     }
+
+
+def _send_verify_lookup_with_curl(endpoint, params):
+    curl_path = shutil.which("curl.exe") or shutil.which("curl")
+    if not curl_path:
+        raise ApiError(
+            "اتصال Python به کاوه‌نگار برقرار نشد و curl هم روی سیستم پیدا نشد.",
+            502,
+            "kavenegar_connection_error",
+        )
+
+    command = [
+        curl_path,
+        "-sS",
+        "--max-time",
+        str(current_app.config["KAVENEGAR_REQUEST_TIMEOUT_SECONDS"]),
+        "-X",
+        "POST",
+        endpoint,
+    ]
+    for key, value in params.items():
+        command.extend(["--data-urlencode", f"{key}={value}"])
+
+    try:
+        completed = subprocess.run(command, capture_output=True, check=False, text=True, timeout=20)
+    except subprocess.TimeoutExpired as exc:
+        raise ApiError(
+            "اتصال به سرویس کاوه‌نگار برقرار نشد.",
+            502,
+            "kavenegar_connection_error",
+            {"reason": "curl_timeout"},
+        ) from exc
+
+    if completed.returncode != 0:
+        current_app.logger.error("Kavenegar curl fallback failed: %s", completed.stderr)
+        raise ApiError(
+            "اتصال به سرویس کاوه‌نگار برقرار نشد.",
+            502,
+            "kavenegar_connection_error",
+            {"reason": completed.stderr.strip()[:300]},
+        )
+
+    try:
+        return json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        current_app.logger.error("Kavenegar curl fallback invalid response: %s", completed.stdout[:300])
+        raise ApiError(
+            "پاسخ کاوه‌نگار قابل پردازش نیست.",
+            502,
+            "kavenegar_invalid_response",
+        ) from exc
 
 
 def _kavenegar_error(status, message):

@@ -24,6 +24,13 @@ class Config:
     }
     KAVENEGAR_API_KEY = os.getenv("KAVENEGAR_API_KEY", "")
     KAVENEGAR_VERIFY_TEMPLATE = os.getenv("KAVENEGAR_VERIFY_TEMPLATE", "")
+    KAVENEGAR_VERIFY_TYPE = os.getenv("KAVENEGAR_VERIFY_TYPE", "sms")
+    KAVENEGAR_USE_CURL_FALLBACK = os.getenv("KAVENEGAR_USE_CURL_FALLBACK", "1").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     KAVENEGAR_REQUEST_TIMEOUT_SECONDS = int(os.getenv("KAVENEGAR_REQUEST_TIMEOUT_SECONDS", "10"))
     JWT_EXPIRES_SECONDS = int(os.getenv("JWT_EXPIRES_SECONDS", str(7 * 24 * 3600)))
     UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "uploads")
