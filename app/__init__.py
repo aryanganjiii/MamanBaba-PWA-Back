@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover
 
 def create_app(config_override=None):
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-    load_dotenv(os.path.join(project_root, ".env"), override=True)
+    load_dotenv(os.path.join(project_root, ".env"), override=True, encoding="utf-8-sig")
 
     from app.config import Config
 
