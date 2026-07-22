@@ -63,10 +63,25 @@ class ApiSmokeTest(unittest.TestCase):
             },
         )
         self.assertEqual(preflight.status_code, 200)
+        self.assertEqual(preflight.headers.get("Access-Control-Allow-Origin"), "http://localhost:5173")
+        self.assertIn("content-type", preflight.headers.get("Access-Control-Allow-Headers", "").lower())
 
         response = self.client.post("/auth/request-otp", json={"phone": "09121234567"})
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.get_json()["data"]["phone"], "09121234567")
+
+    def test_localhost_cors_is_allowed_for_dev_ports(self):
+        preflight = self.client.options(
+            "/auth/request-otp",
+            headers={
+                "Origin": "https://localhost:5174",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+
+        self.assertEqual(preflight.status_code, 200)
+        self.assertEqual(preflight.headers.get("Access-Control-Allow-Origin"), "https://localhost:5174")
 
     def test_family_home_and_request_flow(self):
         headers = self.auth_headers()

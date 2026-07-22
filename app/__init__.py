@@ -1,7 +1,8 @@
 import os
+from urllib.parse import urlparse
 
 import click
-from flask import Flask, send_from_directory
+from flask import Flask, request, send_from_directory
 
 from app.errors import register_error_handlers
 from app.extensions import cors, db, migrate
@@ -44,6 +45,7 @@ def create_app(config_override=None):
     db.init_app(app)
     migrate.init_app(app, db)
     cors.init_app(app, resources={r"/*": {"origins": app.config["CORS_ORIGINS"]}})
+    register_cors_fallback(app)
 
     from app import models  # noqa: F401
 
@@ -85,3 +87,37 @@ def create_app(config_override=None):
         click.echo(result)
 
     return app
+
+
+def register_cors_fallback(app):
+    @app.after_request
+    def add_cors_headers(response):
+        origin = request.headers.get("Origin")
+        if not origin or not is_allowed_cors_origin(app, origin):
+            return response
+
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Vary"] = "Origin"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = request.headers.get(
+            "Access-Control-Request-Headers",
+            "Authorization, Content-Type",
+        )
+        response.headers["Access-Control-Expose-Headers"] = "Content-Length, Content-Range"
+        response.headers["Access-Control-Max-Age"] = "86400"
+        return response
+
+
+def is_allowed_cors_origin(app, origin):
+    if origin in app.config["CORS_ORIGINS"] or "*" in app.config["CORS_ORIGINS"]:
+        return True
+
+    if not app.config["CORS_ALLOW_LOCALHOST"]:
+        return False
+
+    parsed = urlparse(origin)
+    return parsed.scheme in {"http", "https"} and parsed.hostname in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }
