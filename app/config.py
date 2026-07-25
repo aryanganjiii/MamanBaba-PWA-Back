@@ -7,14 +7,19 @@ class Config:
     SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:///mamanbaba.db")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     JSON_AS_ASCII = False
-    CORS_ORIGINS = [
-        origin.strip()
-        for origin in os.getenv(
-            "CORS_ORIGINS",
-            "http://localhost:5173,http://127.0.0.1:5173,https://localhost:5173,https://127.0.0.1:5173",
-        ).split(",")
-        if origin.strip()
-    ]
+    CORS_ORIGINS = list(
+        dict.fromkeys(
+            ["https://app.mamanbaba.com"]
+            + [
+                origin.strip()
+                for origin in os.getenv(
+                    "CORS_ORIGINS",
+                    "http://localhost:5173,http://127.0.0.1:5173,https://localhost:5173,https://127.0.0.1:5173",
+                ).split(",")
+                if origin.strip()
+            ]
+        )
+    )
     CORS_ALLOW_LOCALHOST = os.getenv("CORS_ALLOW_LOCALHOST", "true").strip().lower() in {
         "1",
         "true",

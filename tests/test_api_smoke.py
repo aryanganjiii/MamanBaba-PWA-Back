@@ -83,6 +83,22 @@ class ApiSmokeTest(unittest.TestCase):
         self.assertEqual(preflight.status_code, 200)
         self.assertEqual(preflight.headers.get("Access-Control-Allow-Origin"), "https://localhost:5174")
 
+    def test_production_frontend_cors_is_allowed(self):
+        preflight = self.client.options(
+            "/auth/request-otp",
+            headers={
+                "Origin": "https://app.mamanbaba.com",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+
+        self.assertEqual(preflight.status_code, 200)
+        self.assertEqual(
+            preflight.headers.get("Access-Control-Allow-Origin"),
+            "https://app.mamanbaba.com",
+        )
+
     def test_family_home_and_request_flow(self):
         headers = self.auth_headers()
         home = self.client.get("/api/v1/family/home", headers=headers)
