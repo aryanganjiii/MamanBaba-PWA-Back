@@ -5,6 +5,8 @@ from unittest.mock import patch
 from urllib.error import URLError
 from urllib.parse import parse_qs
 
+from sqlalchemy import inspect
+
 from app import create_app
 from app.extensions import db
 from app.services.kavenegar import send_verify_lookup
@@ -27,7 +29,6 @@ class ApiSmokeTest(unittest.TestCase):
         )
         self.ctx = self.app.app_context()
         self.ctx.push()
-        db.create_all()
         seed_database()
         self.client = self.app.test_client()
 
@@ -55,6 +56,12 @@ class ApiSmokeTest(unittest.TestCase):
         response = self.client.get("/api/v1/catalog/caregiver-registration-options")
         self.assertEqual(response.status_code, 200)
         self.assertIn("skillOptions", response.get_json()["data"])
+
+    def test_database_schema_is_initialized_during_startup(self):
+        table_names = set(inspect(db.engine).get_table_names())
+        self.assertIn("caregiver_profiles", table_names)
+        self.assertIn("caregiver_service_areas", table_names)
+        self.assertIn("caregiver_skills", table_names)
 
     def test_schema_upgrade_is_idempotent(self):
         first = upgrade_schema()

@@ -49,6 +49,13 @@ def create_app(config_override=None):
 
     from app import models  # noqa: F401
 
+    if app.config["DATABASE_AUTO_UPGRADE"]:
+        from app.services.schema import upgrade_schema
+
+        with app.app_context():
+            result = upgrade_schema()
+            app.logger.info("Database schema ready: %s", result)
+
     register_error_handlers(app)
     app.register_blueprint(api_bp)
     app.register_blueprint(auth_bp, name="auth_compat")
