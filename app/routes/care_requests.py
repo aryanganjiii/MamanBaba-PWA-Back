@@ -5,7 +5,7 @@ from app.extensions import db
 from app.models.care_request import CareOffer, CareRequest, CareRequestNeed, CareRequestSelectedDay
 from app.models.caregiver import CaregiverProfile
 from app.models.communication import Notification
-from app.services.auth import auth_required
+from app.services.auth import role_required
 from app.services.matching import ensure_suggested_offers, suggested_caregivers
 from app.utils.http import get_json_payload, paginate_query, pagination_params, success
 from app.utils.validation import as_list, require_fields
@@ -69,7 +69,7 @@ def _build_care_request(payload):
 
 
 @bp.get("")
-@auth_required()
+@role_required("family")
 def list_requests():
     status = request.args.get("status", "all")
     query = CareRequest.query.filter_by(user_id=g.current_user.id).order_by(CareRequest.created_at.desc())
@@ -86,7 +86,7 @@ def list_requests():
 
 
 @bp.post("")
-@auth_required()
+@role_required("family")
 def create_request():
     payload = get_json_payload()
     payload = payload.get("data", payload)
@@ -120,14 +120,14 @@ def create_request():
 
 
 @bp.get("/<int:request_id>")
-@auth_required()
+@role_required("family")
 def request_detail(request_id):
     care_request = _owned_request(request_id)
     return success(care_request.to_detail_dict())
 
 
 @bp.patch("/<int:request_id>/cancel")
-@auth_required()
+@role_required("family")
 def cancel_request(request_id):
     care_request = _owned_request(request_id)
     care_request.status = "cancelled"
@@ -136,7 +136,7 @@ def cancel_request(request_id):
 
 
 @bp.get("/<int:request_id>/suggested-caregivers")
-@auth_required()
+@role_required("family")
 def request_suggested_caregivers(request_id):
     care_request = _owned_request(request_id)
     if not care_request.offers:
@@ -156,7 +156,7 @@ def request_suggested_caregivers(request_id):
 
 
 @bp.post("/<int:request_id>/caregivers/<slug>/collaboration")
-@auth_required()
+@role_required("family")
 def request_caregiver_collaboration(request_id, slug):
     care_request = _owned_request(request_id)
     caregiver = CaregiverProfile.query.filter_by(slug=slug, public_status="public").first()

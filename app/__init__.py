@@ -86,6 +86,27 @@ def create_app(config_override=None):
         result = seed_database(reset=reset)
         click.echo(result)
 
+    @app.cli.command("upgrade-db")
+    def upgrade_db_command():
+        from app.services.schema import upgrade_schema
+
+        result = upgrade_schema()
+        click.echo(result)
+
+    @app.cli.command("approve-caregiver")
+    @click.argument("application_id", type=int)
+    def approve_caregiver_command(application_id):
+        from app.services.caregiver_accounts import review_caregiver_application
+
+        application, profile = review_caregiver_application(application_id, "approved")
+        click.echo(
+            {
+                "applicationId": application.id,
+                "userId": application.user_id,
+                "caregiverSlug": profile.slug,
+            }
+        )
+
     return app
 
 

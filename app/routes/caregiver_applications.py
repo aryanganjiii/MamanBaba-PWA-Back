@@ -1,10 +1,12 @@
 import re
 
-from flask import Blueprint, request
+from flask import Blueprint, g, request
 
 from app.errors import ApiError
 from app.extensions import db
 from app.models.caregiver import CaregiverApplication, CaregiverApplicationFile, CaregiverApplicationItem
+from app.services.auth import role_required
+from app.services.caregiver_accounts import review_caregiver_application
 from app.services.catalog_data import CAREGIVER_REGISTRATION_OPTIONS
 from app.services.files import save_upload
 from app.utils.http import success
@@ -46,8 +48,23 @@ def options():
 
 
 @bp.post("")
+@role_required("caregiver")
 def create_application():
     payload = _payload() or {}
+    existing = (
+        CaregiverApplication.query.filter_by(user_id=g.current_user.id)
+        .filter(CaregiverApplication.status.in_(["draft", "pending_review", "approved"]))
+        .order_by(CaregiverApplication.created_at.desc())
+        .first()
+    )
+    if existing:
+        raise ApiError(
+            "برای این حساب قبلاً درخواست مراقب ثبت شده است.",
+            409,
+            "caregiver_application_exists",
+            {"applicationId": existing.id, "status": existing.status},
+        )
+
     normalized = {
         "fullName": _field(payload, "fullName", "full_name"),
         "nationalCode": _field(payload, "nationalCode", "national_code"),
@@ -91,6 +108,7 @@ def create_application():
     profile_saved = save_upload(profile_image, "profile-images") if profile_image else None
 
     application = CaregiverApplication(
+        user_id=g.current_user.id,
         full_name=normalized["fullName"],
         national_code=normalize_digits(normalized["nationalCode"]),
         birth_date=normalized["birthDate"],
@@ -148,9 +166,39 @@ def create_application():
     return success(application.to_dict(), status=201, message="درخواست همکاری شما ثبت شد.")
 
 
+@bp.get("/me")
+@role_required("caregiver")
+def my_application():
+    application = (
+        CaregiverApplication.query.filter_by(user_id=g.current_user.id)
+        .order_by(CaregiverApplication.created_at.desc())
+        .first()
+    )
+    return success(application.to_dict() if application else None)
+
+
 @bp.get("/<int:application_id>")
+@role_required("caregiver", "admin")
 def application_detail(application_id):
     application = db.session.get(CaregiverApplication, application_id)
     if not application:
         raise ApiError("درخواست همکاری پیدا نشد.", 404, "application_not_found")
+    if application.user_id != g.current_user.id and not g.current_user.has_role("admin"):
+        raise ApiError("اجازه مشاهده این درخواست را ندارید.", 403, "application_forbidden")
     return success(application.to_dict())
+
+
+@bp.patch("/<int:application_id>/status")
+@role_required("admin")
+def update_application_status(application_id):
+    payload = request.get_json(silent=True) or {}
+    application, profile = review_caregiver_application(
+        application_id,
+        str(payload.get("status") or "").strip().lower(),
+    )
+    return success(
+        {
+            "application": application.to_dict(),
+            "caregiver": profile.to_detail_dict() if profile else None,
+        }
+    )

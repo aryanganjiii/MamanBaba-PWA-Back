@@ -4,21 +4,21 @@ from app.errors import ApiError
 from app.extensions import db
 from app.models.care_request import CareRequest
 from app.models.payment import Payment
-from app.services.auth import auth_required
+from app.services.auth import role_required
 from app.utils.http import get_json_payload, success
 
 bp = Blueprint("payments", __name__, url_prefix="/payments")
 
 
 @bp.get("")
-@auth_required()
+@role_required("family")
 def list_payments():
     items = Payment.query.filter_by(user_id=g.current_user.id).order_by(Payment.created_at.desc()).all()
     return success({"items": [item.to_dict() for item in items]})
 
 
 @bp.post("")
-@auth_required()
+@role_required("family")
 def create_payment():
     payload = get_json_payload()
     request_id = payload.get("requestId")
@@ -42,7 +42,7 @@ def create_payment():
 
 
 @bp.post("/<int:payment_id>/mark-paid")
-@auth_required()
+@role_required("family")
 def mark_paid(payment_id):
     payment = Payment.query.filter_by(id=payment_id, user_id=g.current_user.id).first()
     if not payment:

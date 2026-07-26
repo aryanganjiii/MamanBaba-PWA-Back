@@ -8,7 +8,10 @@ from urllib.parse import parse_qs
 from app import create_app
 from app.extensions import db
 from app.services.kavenegar import send_verify_lookup
+from app.services.caregiver_accounts import review_caregiver_application
 from app.services.seed import seed_database
+from app.models.user import User
+from app.services.schema import upgrade_schema
 
 
 class ApiSmokeTest(unittest.TestCase):
@@ -52,6 +55,13 @@ class ApiSmokeTest(unittest.TestCase):
         response = self.client.get("/api/v1/catalog/caregiver-registration-options")
         self.assertEqual(response.status_code, 200)
         self.assertIn("skillOptions", response.get_json()["data"])
+
+    def test_schema_upgrade_is_idempotent(self):
+        first = upgrade_schema()
+        second = upgrade_schema()
+        self.assertTrue(first["upgraded"])
+        self.assertTrue(second["upgraded"])
+        self.assertEqual(second["legacyApplicationsWithoutUser"], 0)
 
     def test_root_auth_compatibility_and_preflight(self):
         preflight = self.client.options(
@@ -169,6 +179,23 @@ class ApiSmokeTest(unittest.TestCase):
         self.assertEqual(message.status_code, 201)
 
     def test_caregiver_application_json(self):
+        phone = "09123334444"
+        requested = self.client.post(
+            "/api/v1/auth/request-otp",
+            json={"phone": phone, "purpose": "caregiver"},
+        )
+        self.assertEqual(requested.status_code, 201)
+        verified = self.client.post(
+            "/api/v1/auth/verify-otp",
+            json={"phone": phone, "code": "12345", "purpose": "caregiver"},
+        )
+        self.assertEqual(verified.status_code, 200)
+        caregiver_token = verified.get_json()["data"]["accessToken"]
+        caregiver_user = verified.get_json()["data"]["user"]
+        self.assertEqual(caregiver_user["roles"], ["caregiver"])
+        self.assertEqual(caregiver_user["caregiverStatus"], "not_started")
+        caregiver_headers = {"Authorization": f"Bearer {caregiver_token}"}
+
         payload = {
             "fullName": "لیلا احمدی",
             "nationalCode": "1234567890",
@@ -190,9 +217,101 @@ class ApiSmokeTest(unittest.TestCase):
             "aboutMe": "من تجربه مراقبت از سالمندان دارم و با صبر و مسئولیت‌پذیری کار می‌کنم.",
             "acceptedTerms": True,
         }
-        response = self.client.post("/api/v1/caregiver-applications", json=payload)
+        response = self.client.post(
+            "/api/v1/caregiver-applications",
+            json=payload,
+            headers=caregiver_headers,
+        )
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.get_json()["data"]["status"], "pending_review")
+        self.assertEqual(response.get_json()["data"]["userId"], caregiver_user["id"])
+
+        caregiver_only_family_access = self.client.get(
+            "/api/v1/family/home",
+            headers=caregiver_headers,
+        )
+        self.assertEqual(caregiver_only_family_access.status_code, 403)
+
+        self.client.post(
+            "/api/v1/auth/request-otp",
+            json={"phone": phone, "purpose": "request"},
+        )
+        dual_verified = self.client.post(
+            "/api/v1/auth/verify-otp",
+            json={"phone": phone, "code": "12345", "purpose": "request"},
+        )
+        self.assertEqual(dual_verified.status_code, 200)
+        self.assertEqual(
+            dual_verified.get_json()["data"]["user"]["roles"],
+            ["caregiver", "family"],
+        )
+        self.assertEqual(
+            dual_verified.get_json()["data"]["user"]["caregiverStatus"],
+            "pending_review",
+        )
+
+        self.client.post(
+            "/api/v1/auth/request-otp",
+            json={"phone": phone, "purpose": "login"},
+        )
+        generic_login = self.client.post(
+            "/api/v1/auth/verify-otp",
+            json={"phone": phone, "code": "12345", "purpose": "login"},
+        )
+        self.assertEqual(generic_login.status_code, 200)
+        self.assertEqual(
+            generic_login.get_json()["data"]["user"]["roles"],
+            ["caregiver", "family"],
+        )
+
+        application_id = response.get_json()["data"]["id"]
+        review_caregiver_application(application_id, "approved")
+        approved_login = self.client.get(
+            "/api/v1/auth/me",
+            headers={
+                "Authorization": (
+                    f"Bearer {generic_login.get_json()['data']['accessToken']}"
+                )
+            },
+        )
+        self.assertEqual(approved_login.status_code, 200)
+        self.assertEqual(
+            approved_login.get_json()["data"]["caregiverStatus"],
+            "approved",
+        )
+        dashboard = self.client.get(
+            "/api/v1/caregivers/me/dashboard",
+            headers={
+                "Authorization": (
+                    f"Bearer {generic_login.get_json()['data']['accessToken']}"
+                )
+            },
+        )
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertEqual(
+            dashboard.get_json()["data"]["profile"]["name"],
+            payload["fullName"],
+        )
+
+    def test_generic_login_does_not_create_an_unregistered_account(self):
+        phone = "09125556666"
+        self.client.post(
+            "/api/v1/auth/request-otp",
+            json={"phone": phone, "purpose": "login"},
+        )
+        response = self.client.post(
+            "/api/v1/auth/verify-otp",
+            json={"phone": phone, "code": "12345", "purpose": "login"},
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.get_json()["error"]["code"], "account_not_registered")
+
+    def test_legacy_primary_role_is_preserved_when_second_role_is_added(self):
+        user = User(phone="09127778888", role="family", is_verified=True)
+        db.session.add(user)
+        user.add_role("caregiver")
+        db.session.commit()
+        self.assertEqual(user.role_names, ["caregiver", "family"])
 
 
 class KavenegarOtpTest(unittest.TestCase):

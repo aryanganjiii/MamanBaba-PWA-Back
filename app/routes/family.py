@@ -6,7 +6,7 @@ from app.models.care_request import CareRequest
 from app.models.caregiver import FavoriteCaregiver
 from app.models.communication import Notification
 from app.models.user import Address
-from app.services.auth import auth_required
+from app.services.auth import role_required
 from app.services.catalog_data import SERVICE_SUGGESTIONS
 from app.utils.http import get_json_payload, success
 
@@ -27,13 +27,13 @@ def _apply_user_profile(user, payload):
 
 
 @bp.get("/profile")
-@auth_required()
+@role_required("family")
 def profile():
     return success(g.current_user.to_dict(include_stats=True))
 
 
 @bp.patch("/profile")
-@auth_required()
+@role_required("family")
 def update_profile():
     payload = get_json_payload()
     _apply_user_profile(g.current_user, payload)
@@ -42,7 +42,7 @@ def update_profile():
 
 
 @bp.get("/home")
-@auth_required()
+@role_required("family")
 def home():
     user = g.current_user
     active_request = (
@@ -65,13 +65,13 @@ def home():
 
 
 @bp.get("/addresses")
-@auth_required()
+@role_required("family")
 def addresses():
     return success({"items": [address.to_dict() for address in g.current_user.addresses]})
 
 
 @bp.post("/addresses")
-@auth_required()
+@role_required("family")
 def create_address():
     payload = get_json_payload()
     for field in ["province", "city"]:
@@ -96,7 +96,7 @@ def create_address():
 
 
 @bp.patch("/addresses/<int:address_id>")
-@auth_required()
+@role_required("family")
 def update_address(address_id):
     address = Address.query.filter_by(id=address_id, user_id=g.current_user.id).first()
     if not address:
@@ -122,7 +122,7 @@ def update_address(address_id):
 
 
 @bp.delete("/addresses/<int:address_id>")
-@auth_required()
+@role_required("family")
 def delete_address(address_id):
     address = Address.query.filter_by(id=address_id, user_id=g.current_user.id).first()
     if not address:
@@ -133,7 +133,7 @@ def delete_address(address_id):
 
 
 @bp.get("/favorites")
-@auth_required()
+@role_required("family")
 def favorites():
     favorites_query = FavoriteCaregiver.query.filter_by(user_id=g.current_user.id).all()
     return success({"items": [favorite.caregiver.to_family_card_dict(favorite=True) for favorite in favorites_query]})

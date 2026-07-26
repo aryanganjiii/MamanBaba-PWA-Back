@@ -1,5 +1,22 @@
 # MamanBaba PWA Backend
 
+## Multi-role accounts
+
+Each mobile number has one `users` record and can own multiple roles through
+`user_roles` (`family`, `caregiver`, and `admin`). Run the idempotent database
+upgrade after deploying this version:
+
+```bash
+flask upgrade-db
+```
+
+Caregiver applications are linked to the authenticated user. An administrator
+can approve an application through the API or the CLI:
+
+```bash
+flask approve-caregiver APPLICATION_ID
+```
+
 Backend Flask برای پروژه `MamanBaba-PWA-Front` با API نسخه‌دار، دیتابیس SQL و ساختار ماژولار.
 
 ## اجرا

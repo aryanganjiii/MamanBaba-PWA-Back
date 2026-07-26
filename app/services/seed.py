@@ -105,6 +105,7 @@ def seed_database(reset=False):
     )
     db.session.add(family)
     db.session.flush()
+    family.add_role("family")
 
     db.session.add(
         Address(

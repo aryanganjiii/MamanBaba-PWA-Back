@@ -3,7 +3,7 @@ from flask import Blueprint, g, request
 from app.errors import ApiError
 from app.extensions import db
 from app.models.communication import Conversation, Message
-from app.services.auth import auth_required
+from app.services.auth import role_required
 from app.utils.http import get_json_payload, success
 
 bp = Blueprint("conversations", __name__, url_prefix="/conversations")
@@ -17,7 +17,7 @@ def _owned_conversation(conversation_id):
 
 
 @bp.get("")
-@auth_required()
+@role_required("family")
 def list_conversations():
     filter_name = request.args.get("filter", "all")
     search = request.args.get("q", "").strip()
@@ -39,7 +39,7 @@ def list_conversations():
 
 
 @bp.get("/<int:conversation_id>/messages")
-@auth_required()
+@role_required("family")
 def list_messages(conversation_id):
     conversation = _owned_conversation(conversation_id)
     conversation.unread_for_family = 0
@@ -48,7 +48,7 @@ def list_messages(conversation_id):
 
 
 @bp.post("/<int:conversation_id>/messages")
-@auth_required()
+@role_required("family")
 def send_message(conversation_id):
     conversation = _owned_conversation(conversation_id)
     payload = get_json_payload()
@@ -68,7 +68,7 @@ def send_message(conversation_id):
 
 
 @bp.post("/support")
-@auth_required()
+@role_required("family")
 def create_support_conversation():
     conversation = Conversation.query.filter_by(family_user_id=g.current_user.id, type="support").first()
     if not conversation:

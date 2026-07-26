@@ -2,6 +2,9 @@ from app.extensions import db
 from app.models.base import TimestampMixin, utc_now
 
 
+ACCOUNT_ROLES = {"family", "caregiver", "admin"}
+
+
 class User(TimestampMixin, db.Model):
     __tablename__ = "users"
 
@@ -19,6 +22,52 @@ class User(TimestampMixin, db.Model):
     notifications = db.relationship("Notification", back_populates="user")
     favorites = db.relationship("FavoriteCaregiver", back_populates="user")
     addresses = db.relationship("Address", back_populates="user", cascade="all, delete-orphan")
+    user_roles = db.relationship(
+        "UserRole",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    caregiver_profile = db.relationship(
+        "CaregiverProfile",
+        back_populates="user",
+        uselist=False,
+    )
+    caregiver_applications = db.relationship(
+        "CaregiverApplication",
+        back_populates="user",
+        order_by="desc(CaregiverApplication.created_at)",
+    )
+
+    @property
+    def role_names(self):
+        roles = {item.role for item in self.user_roles}
+        if self.role in ACCOUNT_ROLES:
+            roles.add(self.role)
+        return sorted(roles)
+
+    def has_role(self, role):
+        return role in self.role_names
+
+    def add_role(self, role):
+        if role not in ACCOUNT_ROLES:
+            raise ValueError(f"Unsupported account role: {role}")
+        if any(item.role == role for item in self.user_roles):
+            return False
+        self.user_roles.append(UserRole(role=role))
+        return True
+
+    @property
+    def caregiver_status(self):
+        if not self.has_role("caregiver"):
+            return None
+        if self.caregiver_profile:
+            if self.caregiver_profile.public_status == "public":
+                return "approved"
+            return self.caregiver_profile.public_status
+        if self.caregiver_applications:
+            return self.caregiver_applications[0].status
+        return "not_started"
 
     def display_first_name(self):
         if self.first_name:
@@ -36,6 +85,8 @@ class User(TimestampMixin, db.Model):
             "avatar": self.avatar_url,
             "avatarUrl": self.avatar_url,
             "role": self.role,
+            "roles": self.role_names,
+            "caregiverStatus": self.caregiver_status,
             "isVerified": self.is_verified,
             **self.timestamps_dict(),
         }
@@ -54,6 +105,18 @@ class User(TimestampMixin, db.Model):
                 "unreadMessages": int(unread_messages or 0),
             }
         return data
+
+
+class UserRole(TimestampMixin, db.Model):
+    __tablename__ = "user_roles"
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "role", name="uq_user_role"),
+    )
+
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    role = db.Column(db.String(30), nullable=False, index=True)
+
+    user = db.relationship("User", back_populates="user_roles")
 
 
 class OtpCode(TimestampMixin, db.Model):
