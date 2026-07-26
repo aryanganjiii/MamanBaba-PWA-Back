@@ -9,6 +9,7 @@ from app.services.auth import role_required
 from app.services.caregiver_accounts import review_caregiver_application
 from app.services.catalog_data import CAREGIVER_REGISTRATION_OPTIONS
 from app.services.files import save_upload
+from app.services.notifications import create_notification, deliver_notification
 from app.utils.http import success
 from app.utils.validation import as_list, bool_value, normalize_digits, require_fields
 
@@ -162,7 +163,15 @@ def create_application():
                 )
             )
 
+    notification = create_notification(
+        g.current_user.id,
+        "درخواست ثبت‌نام مراقب دریافت شد",
+        "اطلاعات شما ثبت شد و پس از بررسی کارشناسان، نتیجه برایتان ارسال می‌شود.",
+        "caregiver_application",
+        "/?view=caregiver-status",
+    )
     db.session.commit()
+    deliver_notification(notification)
     return success(application.to_dict(), status=201, message="درخواست همکاری شما ثبت شد.")
 
 

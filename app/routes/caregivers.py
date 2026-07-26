@@ -4,8 +4,9 @@ from app.errors import ApiError
 from app.extensions import db
 from app.models.care_request import CareOffer, CareRequest
 from app.models.caregiver import CaregiverProfile, CaregiverReview, FavoriteCaregiver
-from app.models.communication import Conversation, Message, Notification
+from app.models.communication import Conversation, Message
 from app.services.auth import auth_required, role_required
+from app.services.notifications import create_notification, deliver_notification
 from app.utils.http import get_json_payload, paginate_query, pagination_params, success
 
 bp = Blueprint("caregivers", __name__, url_prefix="/caregivers")
@@ -86,7 +87,15 @@ def accept_caregiver_offer(offer_id):
     if offer.status == "rejected":
         raise ApiError("پیشنهاد ردشده قابل پذیرش نیست.", 409, "offer_already_rejected")
     offer.status = "accepted"
+    notification = create_notification(
+        offer.family_user_id,
+        "مراقب درخواست شما را پذیرفت",
+        f"{caregiver.full_name} درخواست همکاری شما را پذیرفت.",
+        "offer_accepted",
+        "/?view=home-placeholder&tab=requests",
+    )
     db.session.commit()
+    deliver_notification(notification)
     return success(_caregiver_offer_dict(offer))
 
 
@@ -180,7 +189,17 @@ def create_review(slug):
     db.session.add(review)
     db.session.flush()
     caregiver.refresh_rating()
+    notification = None
+    if caregiver.user_id:
+        notification = create_notification(
+            caregiver.user_id,
+            "نظر جدید برای پروفایل شما",
+            f"{review.author_name} یک نظر {rating} ستاره برای شما ثبت کرد.",
+            "review",
+            "/?view=caregiver-dashboard&tab=profile",
+        )
     db.session.commit()
+    deliver_notification(notification)
     return success(review.to_dict(), status=201)
 
 
@@ -254,13 +273,23 @@ def direct_collaboration(slug):
             time_label="الان",
         )
     )
-    db.session.add(
-        Notification(
-            user_id=g.current_user.id,
-            title="درخواست همکاری ثبت شد",
-            description=f"درخواست همکاری با {caregiver.full_name} ثبت شد.",
-            type="request",
-        )
+    family_notification = create_notification(
+        g.current_user.id,
+        "درخواست همکاری ارسال شد",
+        f"درخواست همکاری برای {caregiver.full_name} ارسال شد.",
+        "request",
+        "/?view=home-placeholder&tab=requests",
     )
+    caregiver_notification = None
+    if caregiver.user_id:
+        caregiver_notification = create_notification(
+            caregiver.user_id,
+            "درخواست همکاری جدید",
+            f"{g.current_user.full_name or 'یک خانواده'} برای همکاری با شما درخواست فرستاده است.",
+            "care_offer",
+            "/?view=caregiver-dashboard&tab=offers",
+        )
     db.session.commit()
+    deliver_notification(family_notification)
+    deliver_notification(caregiver_notification)
     return success({"offer": offer.to_dict(), "conversation": conversation.to_dict()}, status=201)

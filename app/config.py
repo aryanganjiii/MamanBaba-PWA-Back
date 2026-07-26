@@ -58,5 +58,12 @@ class Config:
     ADMIN_JWT_EXPIRES_SECONDS = int(
         os.getenv("ADMIN_JWT_EXPIRES_SECONDS", str(12 * 3600))
     )
+    VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "").strip()
+    VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "").strip()
+    VAPID_SUBJECT = os.getenv(
+        "VAPID_SUBJECT",
+        "mailto:support@mamanbaba.com",
+    ).strip()
+    WEB_PUSH_TIMEOUT_SECONDS = int(os.getenv("WEB_PUSH_TIMEOUT_SECONDS", "10"))
     UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "uploads")
     MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", str(10 * 1024 * 1024)))

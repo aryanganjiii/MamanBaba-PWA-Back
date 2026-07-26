@@ -5,6 +5,7 @@ from app.extensions import db
 from app.models.care_request import CareRequest
 from app.models.payment import Payment
 from app.services.auth import role_required
+from app.services.notifications import create_notification, deliver_notification
 from app.utils.http import get_json_payload, success
 
 bp = Blueprint("payments", __name__, url_prefix="/payments")
@@ -51,5 +52,13 @@ def mark_paid(payment_id):
     payment.reference_id = (get_json_payload() or {}).get("referenceId", payment.reference_id)
     if payment.care_request and payment.care_request.status == "pending":
         payment.care_request.status = "active"
+    notification = create_notification(
+        g.current_user.id,
+        "پرداخت با موفقیت ثبت شد",
+        f"پرداخت {payment.amount:,} تومان با موفقیت ثبت شد.",
+        "payment",
+        "/?view=home-placeholder&tab=requests",
+    )
     db.session.commit()
+    deliver_notification(notification)
     return success(payment.to_dict())

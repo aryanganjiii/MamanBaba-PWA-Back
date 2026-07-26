@@ -12,6 +12,20 @@ def upgrade_schema():
     inspector = inspect(db.engine)
     changes = []
 
+    notification_columns = {
+        column["name"] for column in inspector.get_columns("notifications")
+    }
+    if "action_url" not in notification_columns:
+        db.session.execute(
+            text(
+                "ALTER TABLE notifications "
+                "ADD COLUMN action_url VARCHAR(500) NOT NULL DEFAULT ''"
+            )
+        )
+        db.session.commit()
+        changes.append("notifications.action_url")
+        inspector = inspect(db.engine)
+
     application_columns = {
         column["name"] for column in inspector.get_columns("caregiver_applications")
     }

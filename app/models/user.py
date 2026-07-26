@@ -20,6 +20,11 @@ class User(TimestampMixin, db.Model):
 
     care_requests = db.relationship("CareRequest", back_populates="family_user")
     notifications = db.relationship("Notification", back_populates="user")
+    push_subscriptions = db.relationship(
+        "PushSubscription",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     favorites = db.relationship("FavoriteCaregiver", back_populates="user")
     addresses = db.relationship("Address", back_populates="user", cascade="all, delete-orphan")
     user_roles = db.relationship(
