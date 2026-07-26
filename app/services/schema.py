@@ -25,6 +25,24 @@ def upgrade_schema():
         db.session.commit()
         changes.append("caregiver_applications.user_id")
         inspector = inspect(db.engine)
+        application_columns.add("user_id")
+
+    new_application_columns = {
+        "reviewed_at": "DATETIME",
+        "review_note": "TEXT NOT NULL DEFAULT ''",
+        "reviewed_by": "VARCHAR(120) NOT NULL DEFAULT ''",
+    }
+    for column_name, column_type in new_application_columns.items():
+        if column_name in application_columns:
+            continue
+        db.session.execute(
+            text(
+                f"ALTER TABLE caregiver_applications "
+                f"ADD COLUMN {column_name} {column_type}"
+            )
+        )
+        db.session.commit()
+        changes.append(f"caregiver_applications.{column_name}")
 
     db.session.execute(
         text(

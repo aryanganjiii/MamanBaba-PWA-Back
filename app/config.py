@@ -53,5 +53,10 @@ class Config:
     }
     KAVENEGAR_REQUEST_TIMEOUT_SECONDS = int(os.getenv("KAVENEGAR_REQUEST_TIMEOUT_SECONDS", "10"))
     JWT_EXPIRES_SECONDS = int(os.getenv("JWT_EXPIRES_SECONDS", str(7 * 24 * 3600)))
+    ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin").strip()
+    ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+    ADMIN_JWT_EXPIRES_SECONDS = int(
+        os.getenv("ADMIN_JWT_EXPIRES_SECONDS", str(12 * 3600))
+    )
     UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "uploads")
     MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", str(10 * 1024 * 1024)))

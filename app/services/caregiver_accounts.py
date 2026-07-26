@@ -4,6 +4,7 @@ from app.errors import ApiError
 from app.extensions import db
 from app.models.caregiver import (
     CaregiverApplication,
+    CaregiverApplicationReview,
     CaregiverAvailableDay,
     CaregiverCertificate,
     CaregiverCollaborationType,
@@ -12,6 +13,7 @@ from app.models.caregiver import (
     CaregiverServiceType,
     CaregiverSkill,
 )
+from app.models.base import utc_now
 from app.utils.validation import normalize_digits
 
 
@@ -30,7 +32,7 @@ def _unique_slug(user_id):
     return slug
 
 
-def approve_caregiver_application(application):
+def approve_caregiver_application(application, commit=True):
     if not application.user_id or not application.user:
         raise ApiError(
             "درخواست قدیمی به حساب کاربری متصل نیست و باید ابتدا تعیین مالک شود.",
@@ -92,28 +94,54 @@ def approve_caregiver_application(application):
             db.session.add(model(caregiver_id=profile.id, value=value))
 
     application.status = "approved"
-    db.session.commit()
+    if commit:
+        db.session.commit()
     return profile
 
 
-def review_caregiver_application(application_id, status):
+def review_caregiver_application(
+    application_id,
+    status,
+    review_note="",
+    reviewed_by="system",
+):
     application = db.session.get(CaregiverApplication, application_id)
     if not application:
         raise ApiError("درخواست همکاری پیدا نشد.", 404, "application_not_found")
+    previous_status = application.status
+    review_note = str(review_note or "").strip()
+    reviewed_by = str(reviewed_by or "system").strip()
     if status == "approved":
-        profile = approve_caregiver_application(application)
-        return application, profile
+        profile = approve_caregiver_application(application, commit=False)
+    else:
+        profile = None
     if status not in {"rejected", "pending_review"}:
-        raise ApiError(
-            "وضعیت بررسی معتبر نیست.",
-            422,
-            "invalid_application_status",
-            {"allowed": ["approved", "rejected", "pending_review"]},
+        if status != "approved":
+            raise ApiError(
+                "وضعیت بررسی معتبر نیست.",
+                422,
+                "invalid_application_status",
+                {"allowed": ["approved", "rejected", "pending_review"]},
+            )
+    if status != "approved":
+        application.status = status
+        profile = CaregiverProfile.query.filter_by(
+            user_id=application.user_id
+        ).first()
+        if profile:
+            profile.public_status = status
+            profile.verified = False
+    application.reviewed_at = utc_now()
+    application.review_note = review_note
+    application.reviewed_by = reviewed_by
+    db.session.add(
+        CaregiverApplicationReview(
+            application_id=application.id,
+            previous_status=previous_status,
+            status=status,
+            note=review_note,
+            reviewed_by=reviewed_by,
         )
-    application.status = status
-    profile = CaregiverProfile.query.filter_by(user_id=application.user_id).first()
-    if profile:
-        profile.public_status = status
-        profile.verified = False
+    )
     db.session.commit()
-    return application, None
+    return application, profile

@@ -1,5 +1,6 @@
 from flask import Blueprint
 
+from app.routes.admin import bp as admin_bp
 from app.routes.auth import bp as auth_bp
 from app.routes.care_requests import bp as care_requests_bp
 from app.routes.caregiver_applications import bp as caregiver_applications_bp
@@ -11,6 +12,7 @@ from app.routes.notifications import bp as notifications_bp
 from app.routes.payments import bp as payments_bp
 
 api_bp = Blueprint("api", __name__, url_prefix="/api/v1")
+api_bp.register_blueprint(admin_bp)
 
 api_bp.register_blueprint(auth_bp)
 api_bp.register_blueprint(catalog_bp)

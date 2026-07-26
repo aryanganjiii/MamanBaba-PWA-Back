@@ -12,6 +12,7 @@ from app.extensions import db
 from app.services.kavenegar import send_verify_lookup
 from app.services.caregiver_accounts import review_caregiver_application
 from app.services.seed import seed_database
+from app.models.caregiver import CaregiverApplication
 from app.models.user import User
 from app.services.schema import upgrade_schema
 
@@ -25,6 +26,8 @@ class ApiSmokeTest(unittest.TestCase):
                 "JWT_SECRET_KEY": "test-secret",
                 "OTP_PROVIDER": "static",
                 "OTP_STATIC_CODE": "12345",
+                "ADMIN_USERNAME": "admin",
+                "ADMIN_PASSWORD": "mamanbaba@1405",
             }
         )
         self.ctx = self.app.app_context()
@@ -62,6 +65,7 @@ class ApiSmokeTest(unittest.TestCase):
         self.assertIn("caregiver_profiles", table_names)
         self.assertIn("caregiver_service_areas", table_names)
         self.assertIn("caregiver_skills", table_names)
+        self.assertIn("caregiver_application_reviews", table_names)
 
     def test_schema_upgrade_is_idempotent(self):
         first = upgrade_schema()
@@ -319,6 +323,108 @@ class ApiSmokeTest(unittest.TestCase):
         user.add_role("caregiver")
         db.session.commit()
         self.assertEqual(user.role_names, ["caregiver", "family"])
+
+    def test_admin_auth_and_caregiver_review_workflow(self):
+        applicant = User(
+            phone="09124445555",
+            role="caregiver",
+            is_verified=True,
+        )
+        applicant.add_role("caregiver")
+        db.session.add(applicant)
+        db.session.flush()
+        application = CaregiverApplication(
+            user_id=applicant.id,
+            full_name="مریم احمدی",
+            national_code="1234567890",
+            birth_date="1370/01/01",
+            gender="خانم",
+            marital_status="مجرد",
+            province="تهران",
+            city="تهران",
+            experience_level="۳ تا ۵ سال",
+            hourly_rate=250000,
+            about_me="مراقب سالمند با سابقه کاری.",
+            accepted_terms=True,
+            status="pending_review",
+        )
+        db.session.add(application)
+        db.session.commit()
+
+        invalid_login = self.client.post(
+            "/api/v1/admin/auth/login",
+            json={"username": "admin", "password": "wrong"},
+        )
+        self.assertEqual(invalid_login.status_code, 401)
+
+        family_token = self.login()
+        forbidden = self.client.get(
+            "/api/v1/admin/caregiver-applications/summary",
+            headers={"Authorization": f"Bearer {family_token}"},
+        )
+        self.assertEqual(forbidden.status_code, 403)
+
+        login = self.client.post(
+            "/api/v1/admin/auth/login",
+            json={
+                "username": "admin",
+                "password": "mamanbaba@1405",
+            },
+        )
+        self.assertEqual(login.status_code, 200)
+        admin_token = login.get_json()["data"]["accessToken"]
+        headers = {"Authorization": f"Bearer {admin_token}"}
+
+        summary = self.client.get(
+            "/api/v1/admin/caregiver-applications/summary",
+            headers=headers,
+        )
+        self.assertEqual(summary.status_code, 200)
+        self.assertEqual(summary.get_json()["data"]["pendingReview"], 1)
+
+        listing = self.client.get(
+            "/api/v1/admin/caregiver-applications",
+            query_string={"status": "pending_review", "search": "09124445555"},
+            headers=headers,
+        )
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(listing.get_json()["data"]["items"][0]["id"], application.id)
+
+        missing_rejection_note = self.client.patch(
+            f"/api/v1/admin/caregiver-applications/{application.id}/status",
+            json={"status": "rejected"},
+            headers=headers,
+        )
+        self.assertEqual(missing_rejection_note.status_code, 422)
+
+        rejected = self.client.patch(
+            f"/api/v1/admin/caregiver-applications/{application.id}/status",
+            json={"status": "rejected", "note": "مدرک هویتی خوانا نیست."},
+            headers=headers,
+        )
+        self.assertEqual(rejected.status_code, 200)
+        self.assertEqual(
+            rejected.get_json()["data"]["application"]["status"],
+            "rejected",
+        )
+
+        approved = self.client.patch(
+            f"/api/v1/admin/caregiver-applications/{application.id}/status",
+            json={"status": "approved", "note": "مدارک تکمیل و بررسی شد."},
+            headers=headers,
+        )
+        self.assertEqual(approved.status_code, 200)
+        approved_data = approved.get_json()["data"]
+        self.assertEqual(approved_data["application"]["status"], "approved")
+        self.assertEqual(len(approved_data["application"]["reviewHistory"]), 2)
+        self.assertEqual(
+            approved_data["application"]["reviewHistory"][0]["reviewedBy"],
+            "admin",
+        )
+        self.assertEqual(
+            approved_data["caregiver"]["publicStatus"],
+            "public",
+        )
 
 
 class KavenegarOtpTest(unittest.TestCase):

@@ -114,6 +114,7 @@ class CaregiverProfile(TimestampMixin, db.Model):
                 "canStayOvernight": self.can_stay_overnight,
                 "availableOnHolidays": self.available_on_holidays,
                 "expectationNotes": self.expectation_notes,
+                "publicStatus": self.public_status,
                 "highlights": [item.to_dict() for item in self.highlights],
                 "reviews": [item.to_dict() for item in self.reviews],
                 "isFavorite": favorite,
@@ -242,6 +243,9 @@ class CaregiverApplication(TimestampMixin, db.Model):
     profile_image_reminder_skipped = db.Column(db.Boolean, default=False, nullable=False)
     accepted_terms = db.Column(db.Boolean, default=False, nullable=False)
     status = db.Column(db.String(30), default="pending_review", nullable=False, index=True)
+    reviewed_at = db.Column(db.DateTime(timezone=True))
+    review_note = db.Column(db.Text, default="", nullable=False)
+    reviewed_by = db.Column(db.String(120), default="", nullable=False)
 
     user = db.relationship("User", back_populates="caregiver_applications")
     items = db.relationship(
@@ -249,6 +253,12 @@ class CaregiverApplication(TimestampMixin, db.Model):
     )
     files = db.relationship(
         "CaregiverApplicationFile", cascade="all, delete-orphan", back_populates="application"
+    )
+    review_history = db.relationship(
+        "CaregiverApplicationReview",
+        cascade="all, delete-orphan",
+        back_populates="application",
+        order_by="desc(CaregiverApplicationReview.created_at)",
     )
 
     def grouped_items(self):
@@ -297,10 +307,26 @@ class CaregiverApplication(TimestampMixin, db.Model):
             "profileImageReminderSkipped": self.profile_image_reminder_skipped,
             "acceptedTerms": self.accepted_terms,
             "status": self.status,
+            "reviewedAt": self._iso(self.reviewed_at),
+            "reviewNote": self.review_note,
+            "reviewedBy": self.reviewed_by,
             "files": [file.to_dict() for file in self.files],
             **self.grouped_items(),
             **self.timestamps_dict(),
         }
+        return data
+
+    def to_admin_dict(self):
+        data = self.to_dict()
+        data["applicant"] = {
+            "userId": self.user_id,
+            "phone": self.user.phone if self.user else "",
+            "roles": self.user.role_names if self.user else [],
+            "isVerified": self.user.is_verified if self.user else False,
+        }
+        data["reviewHistory"] = [
+            review.to_dict() for review in self.review_history
+        ]
         return data
 
 
@@ -335,4 +361,34 @@ class CaregiverApplicationFile(TimestampMixin, db.Model):
             "fileType": self.file_type,
             "originalName": self.original_name,
             "url": self.url,
+        }
+
+
+class CaregiverApplicationReview(TimestampMixin, db.Model):
+    __tablename__ = "caregiver_application_reviews"
+
+    application_id = db.Column(
+        db.Integer,
+        db.ForeignKey("caregiver_applications.id"),
+        nullable=False,
+        index=True,
+    )
+    previous_status = db.Column(db.String(30), nullable=False)
+    status = db.Column(db.String(30), nullable=False, index=True)
+    note = db.Column(db.Text, default="", nullable=False)
+    reviewed_by = db.Column(db.String(120), nullable=False)
+
+    application = db.relationship(
+        "CaregiverApplication",
+        back_populates="review_history",
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "previousStatus": self.previous_status,
+            "status": self.status,
+            "note": self.note,
+            "reviewedBy": self.reviewed_by,
+            **self.timestamps_dict(),
         }
