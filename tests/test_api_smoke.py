@@ -230,7 +230,7 @@ class ApiSmokeTest(unittest.TestCase):
         self.assertEqual(suggested.status_code, 200)
         self.assertGreater(len(suggested.get_json()["data"]["items"]), 0)
 
-    def test_matching_uses_subset_skills_and_inclusive_budget(self):
+    def test_matching_uses_subset_skills_and_inclusive_budget_range(self):
         caregiver = CaregiverProfile(
             slug="matching-subset-caregiver",
             full_name="مراقب تطبیق",
@@ -280,7 +280,9 @@ class ApiSmokeTest(unittest.TestCase):
             "selectedDays": ["شنبه"],
             "startTime": "20:00",
             "endTime": "22:00",
-            "budget": 250,
+            "budget": 500,
+            "budgetMin": 250,
+            "budgetMax": 500,
         }
         matched = self.client.post("/api/v1/caregivers/matches", json=payload)
         self.assertEqual(matched.status_code, 200)
@@ -289,17 +291,37 @@ class ApiSmokeTest(unittest.TestCase):
         }
         self.assertIn(caregiver.slug, matched_slugs)
 
-        payload["budget"] = 249
-        below_rate = self.client.post(
+        payload["budgetMin"] = 251
+        below_minimum = self.client.post(
             "/api/v1/caregivers/matches",
             json=payload,
         )
-        below_rate_slugs = {
-            item["slug"] for item in below_rate.get_json()["data"]["items"]
+        below_minimum_slugs = {
+            item["slug"]
+            for item in below_minimum.get_json()["data"]["items"]
         }
-        self.assertNotIn(caregiver.slug, below_rate_slugs)
+        self.assertNotIn(caregiver.slug, below_minimum_slugs)
 
-        payload["budget"] = 300
+        payload["budgetMin"] = 100
+        payload["budgetMax"] = 249
+        above_maximum = self.client.post(
+            "/api/v1/caregivers/matches",
+            json=payload,
+        )
+        above_maximum_slugs = {
+            item["slug"]
+            for item in above_maximum.get_json()["data"]["items"]
+        }
+        self.assertNotIn(caregiver.slug, above_maximum_slugs)
+
+        invalid_range = self.client.post(
+            "/api/v1/caregivers/matches",
+            json={**payload, "budgetMin": 500, "budgetMax": 250},
+        )
+        self.assertEqual(invalid_range.status_code, 422)
+
+        payload["budgetMin"] = 100
+        payload["budgetMax"] = 300
         payload["careNeeds"] = ["کارهای خانه", "مراقبت تخصصی"]
         missing_skill = self.client.post(
             "/api/v1/caregivers/matches",
