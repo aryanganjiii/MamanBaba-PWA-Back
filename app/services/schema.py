@@ -12,6 +12,29 @@ def upgrade_schema():
     inspector = inspect(db.engine)
     changes = []
 
+    care_request_columns = {
+        column["name"] for column in inspector.get_columns("care_requests")
+    }
+    for column_name in ("budget_min_amount", "budget_max_amount"):
+        if column_name in care_request_columns:
+            continue
+        db.session.execute(
+            text(
+                f"ALTER TABLE care_requests "
+                f"ADD COLUMN {column_name} INTEGER NOT NULL DEFAULT 0"
+            )
+        )
+        db.session.commit()
+        changes.append(f"care_requests.{column_name}")
+    db.session.execute(
+        text(
+            "UPDATE care_requests "
+            "SET budget_max_amount = budget_amount "
+            "WHERE budget_max_amount = 0"
+        )
+    )
+    db.session.commit()
+
     notification_columns = {
         column["name"] for column in inspector.get_columns("notifications")
     }

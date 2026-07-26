@@ -177,10 +177,29 @@ def match_caregivers():
             "recurrenceType",
             "startTime",
             "endTime",
-            "budget",
         ],
     )
-    caregivers = matched_caregivers(criteria_from_payload(payload))
+    if not any(
+        payload.get(field) not in (None, "")
+        for field in ("budget", "budgetMin", "budgetMax")
+    ):
+        raise ApiError(
+            "بازه بودجه الزامی است.",
+            422,
+            "budget_range_required",
+        )
+    criteria = criteria_from_payload(payload)
+    if (
+        criteria.budget_min_tomans < 0
+        or criteria.budget_max_tomans <= 0
+        or criteria.budget_min_tomans > criteria.budget_max_tomans
+    ):
+        raise ApiError(
+            "بازه بودجه واردشده معتبر نیست.",
+            422,
+            "invalid_budget_range",
+        )
+    caregivers = matched_caregivers(criteria)
     favorite_ids = _favorite_ids(g.current_user)
     return success(
         {
