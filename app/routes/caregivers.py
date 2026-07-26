@@ -7,7 +7,9 @@ from app.models.caregiver import CaregiverProfile, CaregiverReview, FavoriteCare
 from app.models.communication import Conversation, Message
 from app.services.auth import auth_required, role_required
 from app.services.notifications import create_notification, deliver_notification
+from app.services.matching import criteria_from_payload, matched_caregivers
 from app.utils.http import get_json_payload, paginate_query, pagination_params, success
+from app.utils.validation import require_fields
 
 bp = Blueprint("caregivers", __name__, url_prefix="/caregivers")
 
@@ -158,6 +160,38 @@ def list_caregivers():
             ]
         },
         meta=meta,
+    )
+
+
+@bp.post("/matches")
+@auth_required(optional=True)
+def match_caregivers():
+    payload = get_json_payload()
+    payload = payload.get("data", payload)
+    require_fields(
+        payload,
+        [
+            "city",
+            "neighborhood",
+            "presenceType",
+            "recurrenceType",
+            "startTime",
+            "endTime",
+            "budget",
+        ],
+    )
+    caregivers = matched_caregivers(criteria_from_payload(payload))
+    favorite_ids = _favorite_ids(g.current_user)
+    return success(
+        {
+            "items": [
+                {
+                    **caregiver.to_card_dict(),
+                    "isFavorite": caregiver.id in favorite_ids,
+                }
+                for caregiver in caregivers
+            ]
+        }
     )
 
 
