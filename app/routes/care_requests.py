@@ -8,7 +8,7 @@ from app.services.auth import role_required
 from app.services.matching import ensure_suggested_offers, suggested_caregivers
 from app.services.notifications import create_notification, deliver_notification
 from app.utils.http import get_json_payload, paginate_query, pagination_params, success
-from app.utils.validation import as_list, require_fields
+from app.utils.validation import as_list, normalize_digits, require_fields
 
 bp = Blueprint("care_requests", __name__, url_prefix="/care-requests")
 
@@ -36,9 +36,19 @@ def _build_care_request(payload):
             "startDate",
             "startTime",
             "endTime",
-            "budget",
         ],
     )
+    legacy_budget = int(normalize_digits(payload.get("budget") or 0))
+    budget_min = int(normalize_digits(payload.get("budgetMin") or 0))
+    budget_max = int(
+        normalize_digits(payload.get("budgetMax") or legacy_budget)
+    )
+    if budget_min < 0 or budget_max <= 0 or budget_min > budget_max:
+        raise ApiError(
+            "بازه بودجه واردشده معتبر نیست.",
+            422,
+            "invalid_budget_range",
+        )
     care_needs = as_list(payload.get("careNeeds"))
     return CareRequest(
         user_id=g.current_user.id,
@@ -61,7 +71,9 @@ def _build_care_request(payload):
         full_day_duration_days=int(payload.get("fullDayDurationDays") or 1),
         weekly_duration_mode=payload.get("weeklyDurationMode", ""),
         duration_weeks=int(payload.get("durationWeeks") or 0),
-        budget_amount=int(payload["budget"]),
+        budget_amount=budget_max,
+        budget_min_amount=budget_min,
+        budget_max_amount=budget_max,
         status=payload.get("status", "active"),
         title=payload.get("title") or f"مراقبت {payload['presenceType']} {payload['person']}",
         service_type=payload.get("serviceType") or ("، ".join(care_needs[:2]) if care_needs else "مراقبت در منزل"),

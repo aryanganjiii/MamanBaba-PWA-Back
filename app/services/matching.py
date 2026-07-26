@@ -84,13 +84,21 @@ class MatchingCriteria:
     selected_days: tuple[str, ...]
     start_time: str
     end_time: str
-    budget_tomans: int
+    budget_min_tomans: int
+    budget_max_tomans: int
+
+
+def _budget_to_tomans(value):
+    amount = int(normalize_digits(value or 0))
+    return amount * 1000 if 0 < amount < 10_000 else amount
 
 
 def criteria_from_payload(payload):
-    budget = int(normalize_digits(payload.get("budget") or 0))
-    if 0 < budget < 10_000:
-        budget *= 1000
+    legacy_budget = _budget_to_tomans(payload.get("budget"))
+    budget_min = _budget_to_tomans(payload.get("budgetMin"))
+    budget_max = _budget_to_tomans(payload.get("budgetMax"))
+    if not budget_max:
+        budget_max = legacy_budget
     return MatchingCriteria(
         province=str(payload.get("province") or ""),
         city=str(payload.get("city") or ""),
@@ -103,7 +111,8 @@ def criteria_from_payload(payload):
         ),
         start_time=str(payload.get("startTime") or ""),
         end_time=str(payload.get("endTime") or ""),
-        budget_tomans=budget,
+        budget_min_tomans=budget_min,
+        budget_max_tomans=budget_max,
     )
 
 
@@ -120,6 +129,8 @@ def criteria_from_care_request(care_request):
             "startTime": care_request.start_time,
             "endTime": care_request.end_time,
             "budget": care_request.budget_amount,
+            "budgetMin": care_request.budget_min_amount,
+            "budgetMax": care_request.budget_max_amount,
         }
     )
 
@@ -237,13 +248,17 @@ def caregiver_matches(criteria, caregiver):
     if not _covers_time(criteria, caregiver):
         return False
 
-    if (
-        normalize_match_value(criteria.presence_type)
-        == normalize_match_value("ساعتی")
-        and criteria.budget_tomans > 0
-        and caregiver.hourly_rate > criteria.budget_tomans
-    ):
-        return False
+    if normalize_match_value(criteria.presence_type) == normalize_match_value("ساعتی"):
+        if (
+            criteria.budget_min_tomans > 0
+            and caregiver.hourly_rate < criteria.budget_min_tomans
+        ):
+            return False
+        if (
+            criteria.budget_max_tomans > 0
+            and caregiver.hourly_rate > criteria.budget_max_tomans
+        ):
+            return False
     return True
 
 
@@ -258,8 +273,10 @@ def score_caregiver(criteria, caregiver):
         score += 12
     if criteria.selected_days:
         score += 10
-    if criteria.budget_tomans and caregiver.hourly_rate:
-        difference = max(criteria.budget_tomans - caregiver.hourly_rate, 0)
+    if criteria.budget_max_tomans and caregiver.hourly_rate:
+        minimum = criteria.budget_min_tomans
+        midpoint = minimum + (criteria.budget_max_tomans - minimum) / 2
+        difference = abs(caregiver.hourly_rate - midpoint)
         score += max(12 - difference / 50_000, 0)
     score += caregiver.rating * 3
     score += min(caregiver.experience_years, 10)

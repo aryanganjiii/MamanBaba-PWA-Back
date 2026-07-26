@@ -34,6 +34,8 @@ class CareRequest(TimestampMixin, db.Model):
     weekly_duration_mode = db.Column(db.String(80), default="", nullable=False)
     duration_weeks = db.Column(db.Integer, default=0, nullable=False)
     budget_amount = db.Column(db.Integer, nullable=False)
+    budget_min_amount = db.Column(db.Integer, default=0, nullable=False)
+    budget_max_amount = db.Column(db.Integer, default=0, nullable=False)
     status = db.Column(db.String(30), default="active", nullable=False, index=True)
     title = db.Column(db.String(180), default="", nullable=False)
     service_type = db.Column(db.String(120), default="مراقبت در منزل", nullable=False)
@@ -101,6 +103,8 @@ class CareRequest(TimestampMixin, db.Model):
                 "weeklyDurationMode": self.weekly_duration_mode,
                 "durationWeeks": self.duration_weeks,
                 "budget": self.budget_amount,
+                "budgetMin": self.budget_min_amount,
+                "budgetMax": self.budget_max_amount or self.budget_amount,
             }
         )
         return data
