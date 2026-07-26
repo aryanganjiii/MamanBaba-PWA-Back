@@ -3,7 +3,7 @@ from functools import wraps
 import secrets
 
 from flask import current_app, g, request
-from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.errors import ApiError
@@ -55,15 +55,46 @@ def create_access_token(user):
     return jwt.encode(payload, current_app.config["JWT_SECRET_KEY"], algorithm="HS256")
 
 
+def create_admin_access_token(username):
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": f"admin:{username}",
+        "username": username,
+        "type": "admin",
+        "roles": ["admin"],
+        "iat": int(now.timestamp()),
+        "exp": int(
+            (
+                now
+                + timedelta(
+                    seconds=current_app.config["ADMIN_JWT_EXPIRES_SECONDS"]
+                )
+            ).timestamp()
+        ),
+    }
+    if jwt is None:
+        serializer = URLSafeTimedSerializer(
+            current_app.config["JWT_SECRET_KEY"],
+            salt="access-token",
+        )
+        return serializer.dumps(payload)
+    return jwt.encode(
+        payload,
+        current_app.config["JWT_SECRET_KEY"],
+        algorithm="HS256",
+    )
+
+
 def decode_access_token(token):
     if jwt is None:
         serializer = URLSafeTimedSerializer(current_app.config["JWT_SECRET_KEY"], salt="access-token")
         try:
-            return serializer.loads(token, max_age=current_app.config["JWT_EXPIRES_SECONDS"])
-        except SignatureExpired as exc:
-            raise ApiError("نشست شما منقضی شده است.", 401, "token_expired") from exc
+            payload = serializer.loads(token)
         except BadSignature as exc:
             raise ApiError("توکن ورود معتبر نیست.", 401, "invalid_token") from exc
+        if int(payload.get("exp", 0)) < int(datetime.now(timezone.utc).timestamp()):
+            raise ApiError("نشست شما منقضی شده است.", 401, "token_expired")
+        return payload
 
     try:
         return jwt.decode(token, current_app.config["JWT_SECRET_KEY"], algorithms=["HS256"])
@@ -120,6 +151,38 @@ def role_required(*required_roles):
         return wrapper
 
     return decorator
+
+
+def current_admin_from_request():
+    header = request.headers.get("Authorization", "")
+    if not header.startswith("Bearer "):
+        raise ApiError(
+            "برای دسترسی به پنل مدیریت وارد شوید.",
+            401,
+            "admin_auth_required",
+        )
+
+    token = header.removeprefix("Bearer ").strip()
+    payload = decode_access_token(token)
+    if payload.get("type") != "admin" or "admin" not in payload.get("roles", []):
+        raise ApiError(
+            "نشست مدیریت معتبر نیست.",
+            403,
+            "admin_access_required",
+        )
+    return {
+        "username": payload.get("username", ""),
+        "roles": ["admin"],
+    }
+
+
+def admin_required(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        g.current_admin = current_admin_from_request()
+        return func(*args, **kwargs)
+
+    return wrapper
 
 
 def generate_otp_code():

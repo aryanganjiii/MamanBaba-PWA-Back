@@ -7,6 +7,7 @@ from flask import Flask, request, send_from_directory
 from app.errors import register_error_handlers
 from app.extensions import cors, db, migrate
 from app.routes import api_bp
+from app.routes.admin import bp as admin_bp
 from app.routes.auth import bp as auth_bp
 from app.routes.care_requests import bp as care_requests_bp
 from app.routes.caregiver_applications import bp as caregiver_applications_bp
@@ -58,6 +59,7 @@ def create_app(config_override=None):
 
     register_error_handlers(app)
     app.register_blueprint(api_bp)
+    app.register_blueprint(admin_bp, name="admin_compat")
     app.register_blueprint(auth_bp, name="auth_compat")
     app.register_blueprint(catalog_bp, name="catalog_compat")
     app.register_blueprint(family_bp, name="family_compat")
