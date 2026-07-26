@@ -1,5 +1,15 @@
 # SQL Database Design
 
+## Account ownership
+
+- `users`: one identity per unique mobile number.
+- `user_roles`: multiple roles per identity with a unique `(user_id, role)` constraint.
+- `caregiver_applications.user_id`: owns each authenticated caregiver application.
+- `caregiver_profiles.user_id`: uniquely links an approved public caregiver profile to its identity.
+
+Legacy applications without a reliable owner remain nullable after migration
+and are reported by `flask upgrade-db` for manual reconciliation.
+
 این پروژه با SQLAlchemy مدل‌سازی شده و پیش‌فرض محلی آن SQLite است. با تنظیم `DATABASE_URL` می‌توان همان schema را روی PostgreSQL یا MySQL اجرا کرد.
 
 ## Core Tables

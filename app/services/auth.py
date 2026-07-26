@@ -19,12 +19,33 @@ except ImportError:  # pragma: no cover
     jwt = None
 
 
+AUTH_PURPOSE_ROLES = {
+    "request": "family",
+    "family": "family",
+    "caregiver": "caregiver",
+}
+ALLOWED_AUTH_PURPOSES = {"login", *AUTH_PURPOSE_ROLES}
+
+
+def normalize_auth_purpose(purpose):
+    value = str(purpose or "login").strip().lower()
+    if value not in ALLOWED_AUTH_PURPOSES:
+        raise ApiError(
+            "هدف ورود معتبر نیست.",
+            422,
+            "invalid_auth_purpose",
+            {"allowed": sorted(ALLOWED_AUTH_PURPOSES)},
+        )
+    return value
+
+
 def create_access_token(user):
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user.id),
         "phone": user.phone,
         "role": user.role,
+        "roles": user.role_names,
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(seconds=current_app.config["JWT_EXPIRES_SECONDS"])).timestamp()),
     }
@@ -79,6 +100,28 @@ def auth_required(optional=False):
     return decorator
 
 
+def role_required(*required_roles):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            g.current_user = current_user_from_request()
+            if not any(g.current_user.has_role(role) for role in required_roles):
+                raise ApiError(
+                    "حساب شما اجازه دسترسی به این بخش را ندارد.",
+                    403,
+                    "role_required",
+                    {
+                        "requiredRoles": list(required_roles),
+                        "userRoles": g.current_user.role_names,
+                    },
+                )
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 def generate_otp_code():
     if current_app.config["OTP_PROVIDER"] == "static" or current_app.testing:
         return current_app.config["OTP_STATIC_CODE"]
@@ -90,6 +133,7 @@ def generate_otp_code():
 
 def issue_otp(phone, purpose="login"):
     phone = validate_phone(phone)
+    purpose = normalize_auth_purpose(purpose)
     code = generate_otp_code()
     expires_at = utc_now() + timedelta(seconds=current_app.config["OTP_TTL_SECONDS"])
 
@@ -109,6 +153,7 @@ def issue_otp(phone, purpose="login"):
 def verify_otp(phone, code, purpose="login"):
     phone = validate_phone(phone)
     code = str(code or "").strip()
+    purpose = normalize_auth_purpose(purpose)
 
     otp = (
         OtpCode.query.filter_by(phone=phone, purpose=purpose)
@@ -120,8 +165,22 @@ def verify_otp(phone, code, purpose="login"):
 
     user = User.query.filter_by(phone=phone).first()
     if not user:
-        user = User(phone=phone, role="family", is_verified=True)
+        role = AUTH_PURPOSE_ROLES.get(purpose)
+        if not role:
+            otp.consumed_at = utc_now()
+            db.session.commit()
+            raise ApiError(
+                "حسابی با این شماره ثبت نشده است. ابتدا به‌عنوان خانواده یا مراقب ثبت‌نام کنید.",
+                404,
+                "account_not_registered",
+            )
+        user = User(phone=phone, role=role, is_verified=True)
+        user.add_role(role)
         db.session.add(user)
+    else:
+        role = AUTH_PURPOSE_ROLES.get(purpose)
+        if role:
+            user.add_role(role)
 
     user.is_verified = True
     user.last_login_at = utc_now()

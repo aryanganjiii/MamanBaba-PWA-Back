@@ -16,7 +16,7 @@ from app.models.caregiver import (
 )
 from app.models.communication import Conversation, Message, Notification
 from app.models.payment import Payment
-from app.models.user import Address, OtpCode, User
+from app.models.user import Address, OtpCode, User, UserRole
 
 __all__ = [
     "Address",
@@ -43,4 +43,5 @@ __all__ = [
     "OtpCode",
     "Payment",
     "User",
+    "UserRole",
 ]

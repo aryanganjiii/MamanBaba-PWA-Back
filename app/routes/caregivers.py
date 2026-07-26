@@ -5,10 +5,89 @@ from app.extensions import db
 from app.models.care_request import CareOffer, CareRequest
 from app.models.caregiver import CaregiverProfile, CaregiverReview, FavoriteCaregiver
 from app.models.communication import Conversation, Message, Notification
-from app.services.auth import auth_required
+from app.services.auth import auth_required, role_required
 from app.utils.http import get_json_payload, paginate_query, pagination_params, success
 
 bp = Blueprint("caregivers", __name__, url_prefix="/caregivers")
+
+
+def _current_caregiver_profile():
+    caregiver = CaregiverProfile.query.filter_by(user_id=g.current_user.id).first()
+    if not caregiver or caregiver.public_status != "public":
+        raise ApiError(
+            "پروفایل مراقب هنوز تأیید و فعال نشده است.",
+            403,
+            "caregiver_not_approved",
+            {"status": g.current_user.caregiver_status},
+        )
+    return caregiver
+
+
+def _caregiver_offer_dict(offer):
+    care_request = offer.care_request
+    status_map = {
+        "suggested": "new",
+        "requested": "new",
+        "pending": "pending",
+        "accepted": "accepted",
+        "rejected": "rejected",
+    }
+    return {
+        "id": offer.id,
+        "title": care_request.title if care_request else "درخواست همکاری مستقیم",
+        "person": care_request.service_type if care_request else "",
+        "date": care_request.date_label if care_request else "",
+        "time": care_request.time_label if care_request else "",
+        "location": care_request.location_label if care_request else "",
+        "price": f"{offer.proposed_rate or 0:,}",
+        "status": status_map.get(offer.status, "pending"),
+    }
+
+
+@bp.get("/me/dashboard")
+@role_required("caregiver")
+def caregiver_dashboard():
+    caregiver = _current_caregiver_profile()
+    offers = (
+        CareOffer.query.filter_by(caregiver_id=caregiver.id)
+        .order_by(CareOffer.created_at.desc())
+        .all()
+    )
+    completed_jobs = sum(
+        1
+        for offer in offers
+        if offer.status == "accepted"
+        and offer.care_request
+        and offer.care_request.status == "completed"
+    )
+    return success(
+        {
+            "profile": {
+                "name": caregiver.full_name,
+                "phone": g.current_user.phone,
+                "city": caregiver.city,
+                "rating": f"{caregiver.rating:.1f}",
+                "completedJobs": completed_jobs,
+                "experience": caregiver.experience_years,
+                "isVerified": caregiver.verified,
+            },
+            "offers": [_caregiver_offer_dict(offer) for offer in offers],
+        }
+    )
+
+
+@bp.post("/me/offers/<int:offer_id>/accept")
+@role_required("caregiver")
+def accept_caregiver_offer(offer_id):
+    caregiver = _current_caregiver_profile()
+    offer = CareOffer.query.filter_by(id=offer_id, caregiver_id=caregiver.id).first()
+    if not offer:
+        raise ApiError("پیشنهاد کاری پیدا نشد.", 404, "caregiver_offer_not_found")
+    if offer.status == "rejected":
+        raise ApiError("پیشنهاد ردشده قابل پذیرش نیست.", 409, "offer_already_rejected")
+    offer.status = "accepted"
+    db.session.commit()
+    return success(_caregiver_offer_dict(offer))
 
 
 def _caregiver_by_slug(slug):
@@ -82,7 +161,7 @@ def caregiver_detail(slug):
 
 
 @bp.post("/<slug>/reviews")
-@auth_required()
+@role_required("family")
 def create_review(slug):
     caregiver = _caregiver_by_slug(slug)
     payload = get_json_payload()
@@ -106,7 +185,7 @@ def create_review(slug):
 
 
 @bp.put("/<slug>/favorite")
-@auth_required()
+@role_required("family")
 def set_favorite(slug):
     caregiver = _caregiver_by_slug(slug)
     payload = get_json_payload() if request.is_json else {}
@@ -121,7 +200,7 @@ def set_favorite(slug):
 
 
 @bp.delete("/<slug>/favorite")
-@auth_required()
+@role_required("family")
 def remove_favorite(slug):
     caregiver = _caregiver_by_slug(slug)
     favorite = FavoriteCaregiver.query.filter_by(user_id=g.current_user.id, caregiver_id=caregiver.id).first()
@@ -132,7 +211,7 @@ def remove_favorite(slug):
 
 
 @bp.post("/<slug>/collaboration")
-@auth_required()
+@role_required("family")
 def direct_collaboration(slug):
     caregiver = _caregiver_by_slug(slug)
     payload = get_json_payload() if request.is_json else {}

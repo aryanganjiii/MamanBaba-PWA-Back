@@ -5,7 +5,13 @@ from app.models.base import TimestampMixin
 class CaregiverProfile(TimestampMixin, db.Model):
     __tablename__ = "caregiver_profiles"
 
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
     slug = db.Column(db.String(140), unique=True, nullable=False, index=True)
     full_name = db.Column(db.String(160), nullable=False)
     national_code = db.Column(db.String(20), unique=True)
@@ -31,7 +37,7 @@ class CaregiverProfile(TimestampMixin, db.Model):
     available_on_holidays = db.Column(db.Boolean, default=False, nullable=False)
     expectation_notes = db.Column(db.Text, default="", nullable=False)
 
-    user = db.relationship("User")
+    user = db.relationship("User", back_populates="caregiver_profile")
     skills = db.relationship("CaregiverSkill", cascade="all, delete-orphan", back_populates="caregiver")
     certificates = db.relationship(
         "CaregiverCertificate", cascade="all, delete-orphan", back_populates="caregiver"
@@ -216,6 +222,7 @@ class FavoriteCaregiver(TimestampMixin, db.Model):
 class CaregiverApplication(TimestampMixin, db.Model):
     __tablename__ = "caregiver_applications"
 
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     full_name = db.Column(db.String(160), nullable=False)
     national_code = db.Column(db.String(20), nullable=False, index=True)
     birth_date = db.Column(db.String(20), nullable=False)
@@ -236,6 +243,7 @@ class CaregiverApplication(TimestampMixin, db.Model):
     accepted_terms = db.Column(db.Boolean, default=False, nullable=False)
     status = db.Column(db.String(30), default="pending_review", nullable=False, index=True)
 
+    user = db.relationship("User", back_populates="caregiver_applications")
     items = db.relationship(
         "CaregiverApplicationItem", cascade="all, delete-orphan", back_populates="application"
     )
@@ -269,6 +277,7 @@ class CaregiverApplication(TimestampMixin, db.Model):
     def to_dict(self):
         data = {
             "id": self.id,
+            "userId": self.user_id,
             "fullName": self.full_name,
             "nationalCode": self.national_code,
             "birthDate": self.birth_date,

@@ -1,5 +1,17 @@
 # API Contract
 
+## Multi-role authentication
+
+- OTP purpose `login` signs in an existing account without adding a role.
+- OTP purpose `request` adds the `family` role.
+- OTP purpose `caregiver` adds the `caregiver` role.
+- Auth responses include `user.roles` and `user.caregiverStatus`.
+- `POST /caregiver-applications` requires the `caregiver` role and derives ownership from the token.
+- `GET /caregiver-applications/me` returns the current user's latest application.
+- `PATCH /caregiver-applications/{id}/status` is restricted to administrators.
+- `GET /caregivers/me/dashboard` returns the approved caregiver dashboard.
+- `POST /caregivers/me/offers/{offerId}/accept` accepts an owned work offer.
+
 Base URL: `/api/v1`
 
 برای سازگاری با فرانت‌هایی که `VITE_API_BASE_URL` را فقط تا origin تنظیم کرده‌اند، همین route ها بدون prefix نسخه هم فعال هستند؛ مثلا `/auth/request-otp` کنار `/api/v1/auth/request-otp` کار می‌کند.
