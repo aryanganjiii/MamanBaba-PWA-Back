@@ -1,5 +1,7 @@
+import hashlib
+
 from app.extensions import db
-from app.models.base import TimestampMixin
+from app.models.base import TimestampMixin, utc_now
 
 
 class Notification(TimestampMixin, db.Model):
@@ -11,6 +13,7 @@ class Notification(TimestampMixin, db.Model):
     time_label = db.Column(db.String(80), default="همین حالا", nullable=False)
     is_read = db.Column(db.Boolean, default=False, nullable=False, index=True)
     type = db.Column(db.String(40), default="request", nullable=False, index=True)
+    action_url = db.Column(db.String(500), default="", nullable=False)
 
     user = db.relationship("User", back_populates="notifications")
 
@@ -22,7 +25,42 @@ class Notification(TimestampMixin, db.Model):
             "time": self.time_label,
             "isRead": self.is_read,
             "type": self.type,
+            "actionUrl": self.action_url,
             **self.timestamps_dict(),
+        }
+
+
+class PushSubscription(TimestampMixin, db.Model):
+    __tablename__ = "push_subscriptions"
+
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    endpoint = db.Column(db.Text, nullable=False)
+    endpoint_hash = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    p256dh = db.Column(db.String(255), nullable=False)
+    auth = db.Column(db.String(255), nullable=False)
+    user_agent = db.Column(db.String(500), default="", nullable=False)
+    enabled = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    last_success_at = db.Column(db.DateTime(timezone=True))
+    last_error = db.Column(db.String(500), default="", nullable=False)
+
+    user = db.relationship("User", back_populates="push_subscriptions")
+
+    @staticmethod
+    def hash_endpoint(endpoint):
+        return hashlib.sha256(endpoint.encode("utf-8")).hexdigest()
+
+    def mark_success(self):
+        self.enabled = True
+        self.last_success_at = utc_now()
+        self.last_error = ""
+
+    def to_web_push_dict(self):
+        return {
+            "endpoint": self.endpoint,
+            "keys": {
+                "p256dh": self.p256dh,
+                "auth": self.auth,
+            },
         }
 
 

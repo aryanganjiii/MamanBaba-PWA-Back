@@ -5,4 +5,5 @@ Flask-Migrate>=4.0,<5
 flask-cors>=4.0,<7
 PyJWT>=2.8,<3
 python-dotenv>=1.0,<2
+pywebpush>=2.0,<3
 pytest>=8.0,<9

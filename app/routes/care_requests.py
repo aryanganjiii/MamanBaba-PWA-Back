@@ -4,9 +4,9 @@ from app.errors import ApiError
 from app.extensions import db
 from app.models.care_request import CareOffer, CareRequest, CareRequestNeed, CareRequestSelectedDay
 from app.models.caregiver import CaregiverProfile
-from app.models.communication import Notification
 from app.services.auth import role_required
 from app.services.matching import ensure_suggested_offers, suggested_caregivers
+from app.services.notifications import create_notification, deliver_notification
 from app.utils.http import get_json_payload, paginate_query, pagination_params, success
 from app.utils.validation import as_list, require_fields
 
@@ -101,15 +101,15 @@ def create_request():
 
     db.session.flush()
     ensure_suggested_offers(care_request, db.session)
-    db.session.add(
-        Notification(
-            user_id=g.current_user.id,
-            title="درخواست شما ثبت شد",
-            description="درخواست مراقبت شما ثبت شد و مراقبان مناسب پیشنهاد شدند.",
-            type="request",
-        )
+    notification = create_notification(
+        g.current_user.id,
+        "درخواست مراقبت شما ثبت شد",
+        "درخواست شما ثبت شد و مراقبان مناسب برای بررسی آماده‌اند.",
+        "request",
+        "/?view=home-placeholder&tab=requests",
     )
     db.session.commit()
+    deliver_notification(notification)
     return success(
         {
             "request": care_request.to_detail_dict(),
@@ -131,7 +131,29 @@ def request_detail(request_id):
 def cancel_request(request_id):
     care_request = _owned_request(request_id)
     care_request.status = "cancelled"
+    notifications = []
+    notified_user_ids = set()
+    for offer in care_request.offers:
+        caregiver_user_id = offer.caregiver.user_id if offer.caregiver else None
+        if (
+            offer.status not in {"requested", "accepted"}
+            or not caregiver_user_id
+            or caregiver_user_id in notified_user_ids
+        ):
+            continue
+        notified_user_ids.add(caregiver_user_id)
+        notifications.append(
+            create_notification(
+                caregiver_user_id,
+                "درخواست همکاری لغو شد",
+                f"درخواست «{care_request.title}» توسط خانواده لغو شد.",
+                "request_cancelled",
+                "/?view=caregiver-dashboard&tab=offers",
+            )
+        )
     db.session.commit()
+    for notification in notifications:
+        deliver_notification(notification)
     return success(care_request.to_card_dict(), message="درخواست لغو شد.")
 
 
@@ -174,13 +196,23 @@ def request_caregiver_collaboration(request_id, slug):
         db.session.add(offer)
     offer.status = "requested"
     offer.message = (get_json_payload() or {}).get("message", "")
-    db.session.add(
-        Notification(
-            user_id=g.current_user.id,
-            title="درخواست همکاری ثبت شد",
-            description=f"درخواست همکاری با {caregiver.full_name} ثبت شد.",
-            type="request",
-        )
+    family_notification = create_notification(
+        g.current_user.id,
+        "درخواست همکاری ارسال شد",
+        f"درخواست همکاری برای {caregiver.full_name} ارسال شد.",
+        "request",
+        "/?view=home-placeholder&tab=requests",
     )
+    caregiver_notification = None
+    if caregiver.user_id:
+        caregiver_notification = create_notification(
+            caregiver.user_id,
+            "درخواست همکاری جدید",
+            f"یک خانواده برای درخواست «{care_request.title}» با شما درخواست همکاری ثبت کرده است.",
+            "care_offer",
+            "/?view=caregiver-dashboard&tab=offers",
+        )
     db.session.commit()
+    deliver_notification(family_notification)
+    deliver_notification(caregiver_notification)
     return success(offer.to_dict(), status=201)

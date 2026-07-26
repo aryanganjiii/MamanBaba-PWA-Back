@@ -13,7 +13,9 @@ from app.services.kavenegar import send_verify_lookup
 from app.services.caregiver_accounts import review_caregiver_application
 from app.services.seed import seed_database
 from app.models.caregiver import CaregiverApplication
+from app.models.communication import Notification, PushSubscription
 from app.models.user import User
+from app.services.notifications import create_notification, deliver_notification
 from app.services.schema import upgrade_schema
 
 
@@ -28,6 +30,9 @@ class ApiSmokeTest(unittest.TestCase):
                 "OTP_STATIC_CODE": "12345",
                 "ADMIN_USERNAME": "admin",
                 "ADMIN_PASSWORD": "mamanbaba@1405",
+                "VAPID_PUBLIC_KEY": "test-public-key",
+                "VAPID_PRIVATE_KEY": "test-private-key",
+                "VAPID_SUBJECT": "mailto:test@mamanbaba.com",
             }
         )
         self.ctx = self.app.app_context()
@@ -66,6 +71,67 @@ class ApiSmokeTest(unittest.TestCase):
         self.assertIn("caregiver_service_areas", table_names)
         self.assertIn("caregiver_skills", table_names)
         self.assertIn("caregiver_application_reviews", table_names)
+        self.assertIn("push_subscriptions", table_names)
+
+    def test_push_subscription_and_delivery(self):
+        headers = self.auth_headers()
+        config = self.client.get(
+            "/api/v1/notifications/push/config",
+            headers=headers,
+        )
+        self.assertEqual(config.status_code, 200)
+        self.assertTrue(config.get_json()["data"]["enabled"])
+        self.assertEqual(
+            config.get_json()["data"]["publicKey"],
+            "test-public-key",
+        )
+
+        subscription_payload = {
+            "endpoint": "https://push.example.test/subscriptions/123",
+            "keys": {
+                "p256dh": "browser-public-key",
+                "auth": "browser-auth-secret",
+            },
+        }
+        subscribed = self.client.post(
+            "/api/v1/notifications/push/subscriptions",
+            json=subscription_payload,
+            headers=headers,
+        )
+        self.assertEqual(subscribed.status_code, 201)
+        self.assertEqual(PushSubscription.query.count(), 1)
+
+        user = User.query.filter_by(phone="09121234567").first()
+        notification = create_notification(
+            user.id,
+            "اعلان آزمایشی",
+            "ارسال Push با موفقیت آزمایش شد.",
+            "test",
+            "/?view=home-placeholder",
+        )
+        db.session.commit()
+        sent_payloads = []
+
+        def fake_webpush(**kwargs):
+            sent_payloads.append(kwargs)
+
+        with patch(
+            "app.services.notifications._load_webpush",
+            return_value=(fake_webpush, RuntimeError),
+        ):
+            result = deliver_notification(notification)
+
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(len(sent_payloads), 1)
+        self.assertIn("اعلان آزمایشی", sent_payloads[0]["data"])
+
+        deleted = self.client.delete(
+            "/api/v1/notifications/push/subscriptions",
+            json={"endpoint": subscription_payload["endpoint"]},
+            headers=headers,
+        )
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(PushSubscription.query.count(), 0)
 
     def test_schema_upgrade_is_idempotent(self):
         first = upgrade_schema()
@@ -178,6 +244,13 @@ class ApiSmokeTest(unittest.TestCase):
             headers=headers,
         )
         self.assertEqual(favorite.status_code, 200)
+
+        collaboration = self.client.post(
+            f"/api/v1/caregivers/{slug}/collaboration",
+            json={"message": "برای همکاری مستقیم درخواست دارم."},
+            headers=headers,
+        )
+        self.assertEqual(collaboration.status_code, 201)
 
         conversations = self.client.get("/api/v1/conversations", headers=headers)
         self.assertEqual(conversations.status_code, 200)
@@ -424,6 +497,15 @@ class ApiSmokeTest(unittest.TestCase):
         self.assertEqual(
             approved_data["caregiver"]["publicStatus"],
             "public",
+        )
+        review_notifications = Notification.query.filter_by(
+            user_id=applicant.id,
+            type="caregiver_application",
+        ).all()
+        self.assertEqual(len(review_notifications), 2)
+        self.assertIn(
+            "/?view=caregiver-dashboard",
+            {item.action_url for item in review_notifications},
         )
 
 

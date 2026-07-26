@@ -4,6 +4,7 @@ from app.errors import ApiError
 from app.extensions import db
 from app.models.communication import Conversation, Message
 from app.services.auth import role_required
+from app.services.notifications import create_notification, deliver_notification
 from app.utils.http import get_json_payload, success
 
 bp = Blueprint("conversations", __name__, url_prefix="/conversations")
@@ -63,7 +64,17 @@ def send_message(conversation_id):
         time_label="الان",
     )
     db.session.add(message)
+    notification = None
+    if conversation.caregiver and conversation.caregiver.user_id:
+        notification = create_notification(
+            conversation.caregiver.user_id,
+            "پیام جدید از خانواده",
+            body[:180],
+            "message",
+            "/?view=caregiver-dashboard&tab=messages",
+        )
     db.session.commit()
+    deliver_notification(notification)
     return success(message.to_dict(), status=201)
 
 
