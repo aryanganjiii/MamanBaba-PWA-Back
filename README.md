@@ -10,6 +10,10 @@ upgrade after deploying this version:
 flask upgrade-db
 ```
 
+The schema is also upgraded automatically when the application starts. This is
+controlled by `DATABASE_AUTO_UPGRADE=true` and is useful for Passenger hosting,
+where the WSGI process may be the only startup entrypoint.
+
 Caregiver applications are linked to the authenticated user. An administrator
 can approve an application through the API or the CLI:
 

@@ -6,6 +6,12 @@ class Config:
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", SECRET_KEY)
     SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:///mamanbaba.db")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    DATABASE_AUTO_UPGRADE = os.getenv("DATABASE_AUTO_UPGRADE", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     JSON_AS_ASCII = False
     CORS_ORIGINS = list(
         dict.fromkeys(
