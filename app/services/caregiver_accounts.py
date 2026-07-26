@@ -14,6 +14,7 @@ from app.models.caregiver import (
     CaregiverSkill,
 )
 from app.models.base import utc_now
+from app.services.notifications import create_notification, deliver_notification
 from app.utils.validation import normalize_digits
 
 
@@ -143,5 +144,27 @@ def review_caregiver_application(
             reviewed_by=reviewed_by,
         )
     )
+    if status == "approved":
+        notification = create_notification(
+            application.user_id,
+            "پروفایل مراقب شما تایید شد",
+            "پروفایل شما فعال شد و از این پس می‌توانید پیشنهادهای همکاری را بررسی کنید.",
+            "caregiver_application",
+            "/?view=caregiver-dashboard",
+        )
+    elif status == "rejected":
+        description = "درخواست ثبت‌نام مراقب شما نیاز به اصلاح دارد."
+        if review_note:
+            description = f"{description} دلیل بررسی: {review_note}"
+        notification = create_notification(
+            application.user_id,
+            "درخواست ثبت‌نام نیاز به اصلاح دارد",
+            description,
+            "caregiver_application",
+            "/?view=caregiver-status",
+        )
+    else:
+        notification = None
     db.session.commit()
+    deliver_notification(notification)
     return application, profile

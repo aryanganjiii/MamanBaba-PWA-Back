@@ -15,7 +15,7 @@ from app.models.caregiver import (
     CaregiverSkill,
     FavoriteCaregiver,
 )
-from app.models.communication import Conversation, Message, Notification
+from app.models.communication import Conversation, Message, Notification, PushSubscription
 from app.models.payment import Payment
 from app.models.user import Address, OtpCode, User, UserRole
 
@@ -42,6 +42,7 @@ __all__ = [
     "FavoriteCaregiver",
     "Message",
     "Notification",
+    "PushSubscription",
     "OtpCode",
     "Payment",
     "User",
