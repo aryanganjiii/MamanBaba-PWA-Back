@@ -12,7 +12,15 @@ from app.extensions import db
 from app.services.kavenegar import send_verify_lookup
 from app.services.caregiver_accounts import review_caregiver_application
 from app.services.seed import seed_database
-from app.models.caregiver import CaregiverApplication
+from app.models.caregiver import (
+    CaregiverApplication,
+    CaregiverAvailableDay,
+    CaregiverCollaborationType,
+    CaregiverProfile,
+    CaregiverServiceArea,
+    CaregiverServiceType,
+    CaregiverSkill,
+)
 from app.models.communication import Notification, PushSubscription
 from app.models.user import User
 from app.services.notifications import create_notification, deliver_notification
@@ -221,6 +229,86 @@ class ApiSmokeTest(unittest.TestCase):
         )
         self.assertEqual(suggested.status_code, 200)
         self.assertGreater(len(suggested.get_json()["data"]["items"]), 0)
+
+    def test_matching_uses_subset_skills_and_inclusive_budget(self):
+        caregiver = CaregiverProfile(
+            slug="matching-subset-caregiver",
+            full_name="مراقب تطبیق",
+            province="تهران",
+            city="تهران",
+            experience_years=4,
+            hourly_rate=250000,
+            rating=4.8,
+            verified=True,
+            public_status="public",
+            start_time="18:00",
+            end_time="23:00",
+        )
+        caregiver.skills = [
+            CaregiverSkill(value=value)
+            for value in [
+                "کمک در انجام کارهای خانه",
+                "کمک در کارهای شخصی",
+                "مراقبت از کودک",
+                "صحبت و همدلی",
+                "همراهی برای مراجعه پزشکی",
+                "خرید منزل",
+                "کمک حرکتی",
+            ]
+        ]
+        caregiver.service_types = [CaregiverServiceType(value="ساعتی")]
+        caregiver.collaboration_types = [
+            CaregiverCollaborationType(value="یک‌باره")
+        ]
+        caregiver.available_days = [
+            CaregiverAvailableDay(value="شنبه"),
+            CaregiverAvailableDay(value="یکشنبه"),
+        ]
+        caregiver.service_areas = [
+            CaregiverServiceArea(value="تمام مناطق تهران")
+        ]
+        db.session.add(caregiver)
+        db.session.commit()
+
+        payload = {
+            "province": "تهران",
+            "city": "تهران",
+            "neighborhood": "منطقه ۱",
+            "careNeeds": ["کارهای خانه", "مراقبت شخصی"],
+            "presenceType": "ساعتی",
+            "recurrenceType": "یک‌باره",
+            "selectedDays": ["شنبه"],
+            "startTime": "20:00",
+            "endTime": "22:00",
+            "budget": 250,
+        }
+        matched = self.client.post("/api/v1/caregivers/matches", json=payload)
+        self.assertEqual(matched.status_code, 200)
+        matched_slugs = {
+            item["slug"] for item in matched.get_json()["data"]["items"]
+        }
+        self.assertIn(caregiver.slug, matched_slugs)
+
+        payload["budget"] = 249
+        below_rate = self.client.post(
+            "/api/v1/caregivers/matches",
+            json=payload,
+        )
+        below_rate_slugs = {
+            item["slug"] for item in below_rate.get_json()["data"]["items"]
+        }
+        self.assertNotIn(caregiver.slug, below_rate_slugs)
+
+        payload["budget"] = 300
+        payload["careNeeds"] = ["کارهای خانه", "مراقبت تخصصی"]
+        missing_skill = self.client.post(
+            "/api/v1/caregivers/matches",
+            json=payload,
+        )
+        missing_skill_slugs = {
+            item["slug"] for item in missing_skill.get_json()["data"]["items"]
+        }
+        self.assertNotIn(caregiver.slug, missing_skill_slugs)
 
     def test_caregiver_profile_review_favorite_and_messages(self):
         headers = self.auth_headers()
