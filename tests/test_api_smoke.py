@@ -83,10 +83,14 @@ class ApiSmokeTest(unittest.TestCase):
 
     def test_push_subscription_and_delivery(self):
         headers = self.auth_headers()
-        config = self.client.get(
-            "/api/v1/notifications/push/config",
-            headers=headers,
-        )
+        with patch(
+            "app.services.notifications._load_webpush",
+            return_value=(lambda **kwargs: None, RuntimeError),
+        ):
+            config = self.client.get(
+                "/api/v1/notifications/push/config",
+                headers=headers,
+            )
         self.assertEqual(config.status_code, 200)
         self.assertTrue(config.get_json()["data"]["enabled"])
         self.assertEqual(
@@ -127,6 +131,21 @@ class ApiSmokeTest(unittest.TestCase):
             "app.services.notifications._load_webpush",
             return_value=(fake_webpush, RuntimeError),
         ):
+            test_push = self.client.post(
+                "/api/v1/notifications/push/test",
+                headers=headers,
+            )
+        self.assertEqual(test_push.status_code, 200)
+        self.assertEqual(
+            test_push.get_json()["data"]["delivery"]["sent"],
+            1,
+        )
+
+        sent_payloads.clear()
+        with patch(
+            "app.services.notifications._load_webpush",
+            return_value=(fake_webpush, RuntimeError),
+        ):
             result = deliver_notification(notification)
 
         self.assertEqual(result["sent"], 1)
@@ -139,6 +158,44 @@ class ApiSmokeTest(unittest.TestCase):
             headers=headers,
         )
         self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(PushSubscription.query.count(), 0)
+
+    def test_expired_push_subscription_is_removed(self):
+        headers = self.auth_headers()
+        subscribed = self.client.post(
+            "/api/v1/notifications/push/subscriptions",
+            json={
+                "endpoint": "https://push.example.test/expired",
+                "keys": {
+                    "p256dh": "browser-public-key",
+                    "auth": "browser-auth-secret",
+                },
+            },
+            headers=headers,
+        )
+        self.assertEqual(subscribed.status_code, 201)
+
+        class GoneResponse:
+            status_code = 410
+
+        class GonePushError(Exception):
+            response = GoneResponse()
+
+        def expired_webpush(**kwargs):
+            raise GonePushError("410 Gone")
+
+        with patch(
+            "app.services.notifications._load_webpush",
+            return_value=(expired_webpush, GonePushError),
+        ):
+            response = self.client.post(
+                "/api/v1/notifications/push/test",
+                headers=headers,
+            )
+
+        self.assertEqual(response.status_code, 502)
+        details = response.get_json()["error"]["details"]
+        self.assertEqual(details["removed"], 1)
         self.assertEqual(PushSubscription.query.count(), 0)
 
     def test_schema_upgrade_is_idempotent(self):
