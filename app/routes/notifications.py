@@ -4,7 +4,11 @@ from app.errors import ApiError
 from app.extensions import db
 from app.models.communication import Notification, PushSubscription
 from app.services.auth import auth_required
-from app.services.notifications import push_is_configured
+from app.services.notifications import (
+    create_notification,
+    deliver_notification,
+    push_runtime_status,
+)
 from app.utils.http import get_json_payload, success
 
 bp = Blueprint("notifications", __name__, url_prefix="/notifications")
@@ -39,10 +43,17 @@ def mark_all_read():
 @bp.get("/push/config")
 @auth_required()
 def push_config():
+    runtime = push_runtime_status()
+    active_subscriptions = PushSubscription.query.filter_by(
+        user_id=g.current_user.id,
+        enabled=True,
+    ).count()
     return success(
         {
-            "enabled": push_is_configured(),
+            **runtime,
             "publicKey": current_app.config["VAPID_PUBLIC_KEY"],
+            "activeSubscriptions": active_subscriptions,
+            "hasActiveSubscription": active_subscriptions > 0,
         }
     )
 
@@ -90,7 +101,13 @@ def save_push_subscription():
     subscription.enabled = True
     subscription.last_error = ""
     db.session.commit()
-    return success({"subscribed": True}, status=201)
+    return success(
+        {
+            "subscribed": True,
+            "subscriptionId": subscription.id,
+        },
+        status=201,
+    )
 
 
 @bp.delete("/push/subscriptions")
@@ -105,3 +122,57 @@ def delete_push_subscription():
         ).delete()
         db.session.commit()
     return success({"subscribed": False})
+
+
+@bp.post("/push/test")
+@auth_required()
+def test_push_notification():
+    runtime = push_runtime_status()
+    if not runtime["configured"]:
+        raise ApiError(
+            "کلیدهای VAPID روی سرور تنظیم نشده‌اند.",
+            503,
+            "push_not_configured",
+        )
+    if not runtime["runtimeAvailable"]:
+        raise ApiError(
+            "کتابخانه ارسال Web Push روی سرور نصب نشده است.",
+            503,
+            "push_runtime_unavailable",
+        )
+    if (
+        PushSubscription.query.filter_by(
+            user_id=g.current_user.id,
+            enabled=True,
+        ).count()
+        == 0
+    ):
+        raise ApiError(
+            "برای این دستگاه اشتراک فعال اعلان ثبت نشده است.",
+            409,
+            "push_subscription_missing",
+        )
+
+    notification = create_notification(
+        g.current_user.id,
+        "اعلان آزمایشی مامان‌بابا",
+        "اعلان‌های این دستگاه با موفقیت فعال شدند.",
+        "push_test",
+        "/?view=home-placeholder",
+    )
+    db.session.commit()
+    delivery = deliver_notification(notification)
+    if delivery["sent"] == 0:
+        raise ApiError(
+            "ارسال اعلان آزمایشی ناموفق بود. اشتراک دستگاه را دوباره فعال کنید.",
+            502,
+            "push_delivery_failed",
+            delivery,
+        )
+    return success(
+        {
+            "notification": notification.to_dict(),
+            "delivery": delivery,
+        },
+        message="اعلان آزمایشی ارسال شد.",
+    )

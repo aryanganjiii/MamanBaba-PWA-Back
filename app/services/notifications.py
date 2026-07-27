@@ -38,9 +38,35 @@ def _load_webpush():
     return webpush, WebPushException
 
 
+def push_runtime_status():
+    configured = push_is_configured()
+    try:
+        _load_webpush()
+        runtime_available = True
+    except ImportError:
+        runtime_available = False
+    return {
+        "configured": configured,
+        "runtimeAvailable": runtime_available,
+        "enabled": configured and runtime_available,
+    }
+
+
 def deliver_notification(notification):
-    if not notification or not push_is_configured():
-        return {"sent": 0, "failed": 0, "disabled": 0}
+    result = {
+        "subscriptions": 0,
+        "sent": 0,
+        "failed": 0,
+        "removed": 0,
+        "errors": [],
+    }
+    if not notification:
+        return result
+    if not push_is_configured():
+        current_app.logger.warning(
+            "Web Push delivery skipped because VAPID is not fully configured."
+        )
+        return result
 
     try:
         webpush, web_push_exception = _load_webpush()
@@ -48,7 +74,13 @@ def deliver_notification(notification):
         current_app.logger.warning(
             "Web Push is configured but pywebpush is not installed."
         )
-        return {"sent": 0, "failed": 0, "disabled": 0}
+        result["errors"].append(
+            {
+                "code": "push_runtime_unavailable",
+                "message": "pywebpush is not installed.",
+            }
+        )
+        return result
 
     payload = json.dumps(
         {
@@ -64,7 +96,13 @@ def deliver_notification(notification):
         user_id=notification.user_id,
         enabled=True,
     ).all()
-    result = {"sent": 0, "failed": 0, "disabled": 0}
+    result["subscriptions"] = len(subscriptions)
+    if not subscriptions:
+        current_app.logger.info(
+            "Web Push delivery skipped for user %s: no active subscription.",
+            notification.user_id,
+        )
+        return result
 
     for subscription in subscriptions:
         try:
@@ -81,14 +119,35 @@ def deliver_notification(notification):
         except web_push_exception as exc:
             response = getattr(exc, "response", None)
             status_code = getattr(response, "status_code", None)
-            subscription.last_error = str(exc)[:500]
+            error_message = str(exc)[:500]
+            subscription.last_error = error_message
             result["failed"] += 1
+            result["errors"].append(
+                {
+                    "code": "push_provider_error",
+                    "status": status_code,
+                    "message": error_message,
+                }
+            )
+            current_app.logger.warning(
+                "Web Push provider rejected subscription %s with status %s: %s",
+                subscription.id,
+                status_code,
+                error_message,
+            )
             if status_code in {404, 410}:
-                subscription.enabled = False
-                result["disabled"] += 1
+                db.session.delete(subscription)
+                result["removed"] += 1
         except Exception as exc:  # Push must never break the primary action.
-            subscription.last_error = str(exc)[:500]
+            error_message = str(exc)[:500]
+            subscription.last_error = error_message
             result["failed"] += 1
+            result["errors"].append(
+                {
+                    "code": "push_delivery_error",
+                    "message": error_message,
+                }
+            )
             current_app.logger.exception("Unexpected Web Push delivery error")
 
     if subscriptions:
