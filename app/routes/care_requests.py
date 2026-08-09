@@ -177,7 +177,14 @@ def request_suggested_caregivers(request_id):
         ensure_suggested_offers(care_request, db.session)
         db.session.commit()
     sort = request.args.get("sort")
-    caregivers = [offer.caregiver for offer in care_request.offers]
+    caregivers = [
+        offer.caregiver
+        for offer in care_request.offers
+        if offer.caregiver
+        and offer.caregiver.public_status == "public"
+        and offer.caregiver.verified
+        and offer.caregiver.is_available
+    ]
     if sort == "price-low":
         caregivers.sort(key=lambda item: item.hourly_rate)
     elif sort == "price-high":
@@ -193,7 +200,11 @@ def request_suggested_caregivers(request_id):
 @role_required("family")
 def request_caregiver_collaboration(request_id, slug):
     care_request = _owned_request(request_id)
-    caregiver = CaregiverProfile.query.filter_by(slug=slug, public_status="public").first()
+    caregiver = CaregiverProfile.query.filter_by(
+        slug=slug,
+        public_status="public",
+        is_available=True,
+    ).first()
     if not caregiver:
         raise ApiError("مراقب پیدا نشد.", 404, "caregiver_not_found")
 

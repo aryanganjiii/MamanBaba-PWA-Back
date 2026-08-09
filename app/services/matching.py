@@ -213,7 +213,11 @@ def _covers_time(criteria, caregiver):
 
 
 def caregiver_matches(criteria, caregiver):
-    if caregiver.public_status != "public" or not caregiver.verified:
+    if (
+        caregiver.public_status != "public"
+        or not caregiver.verified
+        or not caregiver.is_available
+    ):
         return False
     if not _covers_location(criteria, caregiver):
         return False
@@ -287,6 +291,7 @@ def matched_caregivers(criteria, limit=12):
     caregivers = CaregiverProfile.query.filter_by(
         public_status="public",
         verified=True,
+        is_available=True,
     ).all()
     matches = [
         caregiver

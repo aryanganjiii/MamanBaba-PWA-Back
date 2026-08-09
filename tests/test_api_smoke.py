@@ -14,6 +14,7 @@ from app.services.caregiver_accounts import review_caregiver_application
 from app.services.seed import seed_database
 from app.models.caregiver import (
     CaregiverApplication,
+    CaregiverApplicationItem,
     CaregiverAvailableDay,
     CaregiverCollaborationType,
     CaregiverProfile,
@@ -21,6 +22,7 @@ from app.models.caregiver import (
     CaregiverServiceType,
     CaregiverSkill,
 )
+from app.services.catalog_data import CAREGIVER_REGISTRATION_OPTIONS
 from app.models.communication import Notification, PushSubscription
 from app.models.user import User
 from app.services.notifications import create_notification, deliver_notification
@@ -543,6 +545,157 @@ class ApiSmokeTest(unittest.TestCase):
             dashboard.get_json()["data"]["profile"]["name"],
             payload["fullName"],
         )
+
+    def test_caregiver_application_updates_and_availability(self):
+        options = CAREGIVER_REGISTRATION_OPTIONS
+        city = options["activeProvinces"][0]["cities"][0]
+        area = options["serviceAreaOptionsByCity"][city][1]
+        user = User(
+            phone="09123335555",
+            role="caregiver",
+            full_name="مراقب آزمایشی",
+            is_verified=True,
+        )
+        user.add_role("caregiver")
+        db.session.add(user)
+        db.session.flush()
+        application = CaregiverApplication(
+            user_id=user.id,
+            full_name=user.full_name,
+            national_code="0012345678",
+            birth_date="1370/01/01",
+            gender=options["genderOptions"][0],
+            marital_status=options["maritalStatusOptions"][0],
+            province=options["activeProvinces"][0]["province"],
+            city=city,
+            experience_level=options["experienceOptions"][1],
+            hourly_rate=250000,
+            about_me="پروفایل آزمایشی",
+            accepted_terms=True,
+            status="pending_review",
+        )
+        db.session.add(application)
+        db.session.flush()
+        initial_items = {
+            "skills": [options["skillOptions"][0]],
+            "certificates": [options["certificateOptions"][0]],
+            "service_types": [options["serviceTypeOptions"][0]],
+            "collaboration_types": [options["collaborationTypeOptions"][0]],
+            "available_days": [options["weekDayOptions"][0]],
+            "service_areas": [area],
+        }
+        for category, values in initial_items.items():
+            for value in values:
+                db.session.add(
+                    CaregiverApplicationItem(
+                        application_id=application.id,
+                        category=category,
+                        value=value,
+                    )
+                )
+        db.session.commit()
+        profile = review_caregiver_application(application.id, "approved")[1]
+        token_response = self.client.post(
+            "/api/v1/auth/request-otp",
+            json={"phone": user.phone, "purpose": "login"},
+        )
+        self.assertEqual(token_response.status_code, 201)
+        token_response = self.client.post(
+            "/api/v1/auth/verify-otp",
+            json={"phone": user.phone, "code": "12345", "purpose": "login"},
+        )
+        headers = {"Authorization": f"Bearer {token_response.get_json()['data']['accessToken']}"}
+
+        updated = self.client.patch(
+            "/api/v1/caregiver-applications/me",
+            json={
+                "availableDays": options["weekDayOptions"][:2],
+                "serviceAreas": [area],
+                "startTime": "09:00",
+                "endTime": "17:00",
+                "canStayOvernight": True,
+                "availableOnHolidays": False,
+            },
+            headers=headers,
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.get_json()["data"]["startTime"], "09:00")
+        self.assertEqual(profile.start_time, "09:00")
+        self.assertEqual(profile.available_days[0].value, options["weekDayOptions"][0])
+
+        new_skill = options["skillOptions"][1]
+        pending = self.client.patch(
+            "/api/v1/caregiver-applications/me",
+            json={
+                "experienceLevel": options["experienceOptions"][2],
+                "skills": [new_skill],
+            },
+            headers=headers,
+        )
+        self.assertEqual(pending.status_code, 200)
+        pending_data = pending.get_json()["data"]
+        self.assertEqual(pending_data["skills"], initial_items["skills"])
+        self.assertEqual(len(pending_data["pendingChanges"]), 1)
+        self.assertEqual(pending_data["pendingChanges"][0]["changes"]["skills"], [new_skill])
+        self.assertEqual(profile.skills[0].value, initial_items["skills"][0])
+
+        certificate_file = self.client.patch(
+            "/api/v1/caregiver-applications/me",
+            data={
+                "certificates": options["certificateOptions"][1],
+                "certificateFiles": (BytesIO(b"%PDF-1.4 test"), "certificate.pdf"),
+            },
+            headers=headers,
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(certificate_file.status_code, 200)
+        file_data = certificate_file.get_json()["data"]["files"][-1]
+        self.assertEqual(file_data["originalName"], "certificate.pdf")
+        self.assertEqual(file_data["reviewStatus"], "pending")
+
+        immutable = self.client.patch(
+            "/api/v1/caregiver-applications/me",
+            json={"fullName": "نام جدید"},
+            headers=headers,
+        )
+        self.assertEqual(immutable.status_code, 422)
+        self.assertEqual(immutable.get_json()["error"]["code"], "immutable_field")
+
+        admin_login = self.client.post(
+            "/api/v1/admin/auth/login",
+            json={"username": "admin", "password": "mamanbaba@1405"},
+        )
+        admin_headers = {
+            "Authorization": f"Bearer {admin_login.get_json()['data']['accessToken']}"
+        }
+        change_id = pending_data["pendingChanges"][0]["id"]
+        reviewed = self.client.patch(
+            f"/api/v1/admin/caregiver-applications/{application.id}/updates/{change_id}/status",
+            json={"status": "approved"},
+            headers=admin_headers,
+        )
+        self.assertEqual(reviewed.status_code, 200)
+        db.session.refresh(profile)
+        self.assertEqual(profile.skills[0].value, new_skill)
+        self.assertEqual(reviewed.get_json()["data"]["application"]["pendingChanges"], [])
+
+        inactive = self.client.patch(
+            "/api/v1/caregivers/me/status",
+            json={"isActive": False},
+            headers=headers,
+        )
+        self.assertEqual(inactive.status_code, 200)
+        self.assertFalse(inactive.get_json()["data"]["isActive"])
+        listed = self.client.get("/api/v1/caregivers")
+        self.assertNotIn(profile.slug, {item["slug"] for item in listed.get_json()["data"]["items"]})
+
+        active = self.client.patch(
+            "/api/v1/caregivers/me/status",
+            json={"isActive": True},
+            headers=headers,
+        )
+        self.assertEqual(active.status_code, 200)
+        self.assertTrue(active.get_json()["data"]["isActive"])
 
     def test_generic_login_does_not_create_an_unregistered_account(self):
         phone = "09125556666"

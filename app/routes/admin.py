@@ -6,10 +6,11 @@ from sqlalchemy import func, or_
 
 from app.errors import ApiError
 from app.extensions import db
-from app.models.caregiver import CaregiverApplication
+from app.models.caregiver import CaregiverApplication, CaregiverApplicationChange
 from app.models.user import User
 from app.services.auth import admin_required, create_admin_access_token
 from app.services.caregiver_accounts import review_caregiver_application
+from app.services.caregiver_profile_updates import review_caregiver_application_change
 from app.utils.http import get_json_payload, paginate_query, pagination_params, success
 
 bp = Blueprint("admin", __name__, url_prefix="/admin")
@@ -27,6 +28,9 @@ def _application_or_404(application_id):
 
 
 def _application_list_item(application):
+    pending_changes = sum(
+        1 for change in application.profile_changes if change.status == "pending"
+    )
     return {
         "id": application.id,
         "fullName": application.full_name,
@@ -37,6 +41,8 @@ def _application_list_item(application):
         "hourlyRate": application.hourly_rate,
         "status": application.status,
         "fileCount": len(application.files),
+        "pendingChangeCount": pending_changes,
+        "hasPendingChanges": pending_changes > 0,
         "profileImageUrl": application.profile_image_url,
         "reviewedAt": application._iso(application.reviewed_at),
         "createdAt": application._iso(application.created_at),
@@ -109,6 +115,9 @@ def caregiver_application_summary():
             func.date(CaregiverApplication.reviewed_at) == date.today().isoformat(),
         ).count()
     )
+    pending_profile_updates = CaregiverApplicationChange.query.filter_by(
+        status="pending"
+    ).count()
     return success(
         {
             "total": sum(counts.values()),
@@ -117,6 +126,7 @@ def caregiver_application_summary():
             "rejected": counts.get("rejected", 0),
             "submittedToday": submitted_today,
             "reviewedToday": reviewed_today,
+            "pendingProfileUpdates": pending_profile_updates,
         }
     )
 
@@ -218,4 +228,38 @@ def update_caregiver_application_status(application_id):
             if status == "approved"
             else "درخواست مراقب رد شد."
         ),
+    )
+
+
+@bp.patch("/caregiver-applications/<int:application_id>/updates/<int:change_id>/status")
+@admin_required
+def update_caregiver_profile_change_status(application_id, change_id):
+    payload = get_json_payload()
+    status = str(payload.get("status") or "").strip().lower()
+    note = str(payload.get("note") or "").strip()
+    if status not in {"approved", "rejected"}:
+        raise ApiError(
+            "Invalid profile update decision.",
+            422,
+            "invalid_review_decision",
+            {"allowed": ["approved", "rejected"]},
+        )
+    if status == "rejected" and not note:
+        raise ApiError(
+            "A rejection note is required.",
+            422,
+            "rejection_note_required",
+        )
+    application, profile = review_caregiver_application_change(
+        application_id,
+        change_id,
+        status,
+        review_note=note,
+        reviewed_by=g.current_admin["username"],
+    )
+    return success(
+        {
+            "application": application.to_admin_dict(),
+            "caregiver": profile.to_detail_dict() if profile else None,
+        }
     )

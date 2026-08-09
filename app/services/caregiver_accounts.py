@@ -69,6 +69,7 @@ def approve_caregiver_application(application, commit=True):
     profile.expectation_notes = application.expectation_notes
     profile.verified = True
     profile.public_status = "public"
+    profile.is_available = True
 
     application.user.full_name = application.full_name
     application.user.city = application.city
@@ -86,7 +87,9 @@ def approve_caregiver_application(application, commit=True):
     for item in application.items:
         if item.category in grouped:
             grouped[item.category].append(item.value)
-    grouped["certificates"].extend(file.original_name for file in application.files)
+    for file in application.files:
+        file.review_status = "approved"
+        grouped["certificates"].append(file.original_name)
 
     db.session.flush()
     for relationship_name, model in relationship_models.items():

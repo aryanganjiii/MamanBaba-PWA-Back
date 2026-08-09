@@ -1,3 +1,5 @@
+import json
+
 from app.extensions import db
 from app.models.base import TimestampMixin
 
@@ -31,6 +33,7 @@ class CaregiverProfile(TimestampMixin, db.Model):
     image_url = db.Column(db.String(500), default="", nullable=False)
     verified = db.Column(db.Boolean, default=False, nullable=False)
     public_status = db.Column(db.String(30), default="public", nullable=False, index=True)
+    is_available = db.Column(db.Boolean, default=True, nullable=False, index=True)
     start_time = db.Column(db.String(10), default="08:00", nullable=False)
     end_time = db.Column(db.String(10), default="16:00", nullable=False)
     can_stay_overnight = db.Column(db.Boolean, default=False, nullable=False)
@@ -79,6 +82,7 @@ class CaregiverProfile(TimestampMixin, db.Model):
             "rating": self.rating,
             "reviewCount": self.review_count,
             "verified": self.verified,
+            "isActive": self.is_available,
             "repeatHireCount": self.repeat_hire_count,
             "skills": self.list_values("skills"),
             "serviceAreas": self.list_values("service_areas"),
@@ -115,6 +119,7 @@ class CaregiverProfile(TimestampMixin, db.Model):
                 "availableOnHolidays": self.available_on_holidays,
                 "expectationNotes": self.expectation_notes,
                 "publicStatus": self.public_status,
+                "isActive": self.is_available,
                 "highlights": [item.to_dict() for item in self.highlights],
                 "reviews": [item.to_dict() for item in self.reviews],
                 "isFavorite": favorite,
@@ -254,6 +259,12 @@ class CaregiverApplication(TimestampMixin, db.Model):
     files = db.relationship(
         "CaregiverApplicationFile", cascade="all, delete-orphan", back_populates="application"
     )
+    profile_changes = db.relationship(
+        "CaregiverApplicationChange",
+        cascade="all, delete-orphan",
+        back_populates="application",
+        order_by="desc(CaregiverApplicationChange.created_at)",
+    )
     review_history = db.relationship(
         "CaregiverApplicationReview",
         cascade="all, delete-orphan",
@@ -314,6 +325,11 @@ class CaregiverApplication(TimestampMixin, db.Model):
             **self.grouped_items(),
             **self.timestamps_dict(),
         }
+        changes = [change.to_dict() for change in self.profile_changes]
+        data["pendingChanges"] = [
+            change for change in changes if change["status"] == "pending"
+        ]
+        data["changeHistory"] = changes
         return data
 
     def to_admin_dict(self):
@@ -352,6 +368,7 @@ class CaregiverApplicationFile(TimestampMixin, db.Model):
     original_name = db.Column(db.String(255), nullable=False)
     stored_name = db.Column(db.String(255), nullable=False)
     url = db.Column(db.String(500), nullable=False)
+    review_status = db.Column(db.String(30), default="pending", nullable=False, index=True)
 
     application = db.relationship("CaregiverApplication", back_populates="files")
 
@@ -361,6 +378,50 @@ class CaregiverApplicationFile(TimestampMixin, db.Model):
             "fileType": self.file_type,
             "originalName": self.original_name,
             "url": self.url,
+            "reviewStatus": self.review_status,
+        }
+
+
+class CaregiverApplicationChange(TimestampMixin, db.Model):
+    __tablename__ = "caregiver_application_changes"
+
+    application_id = db.Column(
+        db.Integer,
+        db.ForeignKey("caregiver_applications.id"),
+        nullable=False,
+        index=True,
+    )
+    change_type = db.Column(db.String(40), default="profile_update", nullable=False)
+    payload_json = db.Column(db.Text, default="{}", nullable=False)
+    status = db.Column(db.String(30), default="pending", nullable=False, index=True)
+    reviewed_at = db.Column(db.DateTime(timezone=True))
+    review_note = db.Column(db.Text, default="", nullable=False)
+    reviewed_by = db.Column(db.String(120), default="", nullable=False)
+
+    application = db.relationship("CaregiverApplication", back_populates="profile_changes")
+
+    @property
+    def payload(self):
+        try:
+            value = json.loads(self.payload_json or "{}")
+        except (TypeError, ValueError):
+            value = {}
+        return value if isinstance(value, dict) else {}
+
+    @payload.setter
+    def payload(self, value):
+        self.payload_json = json.dumps(value or {}, ensure_ascii=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "changeType": self.change_type,
+            "changes": self.payload,
+            "status": self.status,
+            "reviewedAt": self._iso(self.reviewed_at),
+            "reviewNote": self.review_note,
+            "reviewedBy": self.reviewed_by,
+            **self.timestamps_dict(),
         }
 
 
