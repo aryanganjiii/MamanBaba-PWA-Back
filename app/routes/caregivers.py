@@ -9,7 +9,7 @@ from app.services.auth import auth_required, role_required
 from app.services.notifications import create_notification, deliver_notification
 from app.services.matching import criteria_from_payload, matched_caregivers
 from app.utils.http import get_json_payload, paginate_query, pagination_params, success
-from app.utils.validation import require_fields
+from app.utils.validation import bool_value, require_fields
 
 bp = Blueprint("caregivers", __name__, url_prefix="/caregivers")
 
@@ -73,8 +73,44 @@ def caregiver_dashboard():
                 "completedJobs": completed_jobs,
                 "experience": caregiver.experience_years,
                 "isVerified": caregiver.verified,
+                "isActive": caregiver.is_available,
             },
             "offers": [_caregiver_offer_dict(offer) for offer in offers],
+        }
+    )
+
+
+@bp.patch("/me/status")
+@role_required("caregiver")
+def update_caregiver_status():
+    payload = get_json_payload()
+    raw_value = payload.get("isActive", payload.get("active"))
+    if raw_value is None:
+        raise ApiError(
+            "isActive is required.",
+            422,
+            "missing_fields",
+            {"fields": ["isActive"]},
+        )
+    if not isinstance(raw_value, bool) and str(raw_value).strip().lower() not in {
+        "1",
+        "0",
+        "true",
+        "false",
+        "yes",
+        "no",
+        "on",
+        "off",
+    }:
+        raise ApiError("isActive must be a boolean.", 422, "invalid_boolean")
+
+    caregiver = _current_caregiver_profile()
+    caregiver.is_available = bool_value(raw_value)
+    db.session.commit()
+    return success(
+        {
+            "isActive": caregiver.is_available,
+            "status": "active" if caregiver.is_available else "inactive",
         }
     )
 
@@ -102,7 +138,11 @@ def accept_caregiver_offer(offer_id):
 
 
 def _caregiver_by_slug(slug):
-    caregiver = CaregiverProfile.query.filter_by(slug=slug, public_status="public").first()
+    caregiver = CaregiverProfile.query.filter_by(
+        slug=slug,
+        public_status="public",
+        is_available=True,
+    ).first()
     if not caregiver:
         raise ApiError("مراقب پیدا نشد.", 404, "caregiver_not_found")
     return caregiver
@@ -120,7 +160,7 @@ def _favorite_ids(user):
 @bp.get("")
 @auth_required(optional=True)
 def list_caregivers():
-    query = CaregiverProfile.query.filter_by(public_status="public")
+    query = CaregiverProfile.query.filter_by(public_status="public", is_available=True)
     city = request.args.get("city")
     area = request.args.get("area")
     skill = request.args.get("skill")

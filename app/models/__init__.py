@@ -1,6 +1,7 @@
 from app.models.care_request import CareOffer, CareRequest, CareRequestNeed, CareRequestSelectedDay
 from app.models.caregiver import (
     CaregiverApplication,
+    CaregiverApplicationChange,
     CaregiverApplicationFile,
     CaregiverApplicationItem,
     CaregiverApplicationReview,
@@ -26,6 +27,7 @@ __all__ = [
     "CareRequestNeed",
     "CareRequestSelectedDay",
     "CaregiverApplication",
+    "CaregiverApplicationChange",
     "CaregiverApplicationFile",
     "CaregiverApplicationItem",
     "CaregiverApplicationReview",

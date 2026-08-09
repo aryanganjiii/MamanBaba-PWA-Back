@@ -81,6 +81,32 @@ def upgrade_schema():
         db.session.commit()
         changes.append(f"caregiver_applications.{column_name}")
 
+    caregiver_profile_columns = {
+        column["name"] for column in inspector.get_columns("caregiver_profiles")
+    }
+    if "is_available" not in caregiver_profile_columns:
+        db.session.execute(
+            text(
+                "ALTER TABLE caregiver_profiles "
+                "ADD COLUMN is_available BOOLEAN NOT NULL DEFAULT 1"
+            )
+        )
+        db.session.commit()
+        changes.append("caregiver_profiles.is_available")
+
+    application_file_columns = {
+        column["name"] for column in inspector.get_columns("caregiver_application_files")
+    }
+    if "review_status" not in application_file_columns:
+        db.session.execute(
+            text(
+                "ALTER TABLE caregiver_application_files "
+                "ADD COLUMN review_status VARCHAR(30) NOT NULL DEFAULT 'approved'"
+            )
+        )
+        db.session.commit()
+        changes.append("caregiver_application_files.review_status")
+
     db.session.execute(
         text(
             """

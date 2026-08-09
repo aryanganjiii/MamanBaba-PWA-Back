@@ -8,6 +8,9 @@ from app.models.caregiver import CaregiverApplication, CaregiverApplicationFile,
 from app.services.auth import role_required
 from app.services.caregiver_accounts import review_caregiver_application
 from app.services.catalog_data import CAREGIVER_REGISTRATION_OPTIONS
+from app.services.caregiver_profile_updates import (
+    update_caregiver_application,
+)
 from app.services.files import save_upload
 from app.services.notifications import create_notification, deliver_notification
 from app.utils.http import success
@@ -184,6 +187,33 @@ def my_application():
         .first()
     )
     return success(application.to_dict() if application else None)
+
+
+@bp.patch("/me")
+@role_required("caregiver")
+def update_my_application():
+    payload = request.get_json(silent=True) if request.is_json else request.form
+    application = (
+        CaregiverApplication.query.filter_by(user_id=g.current_user.id)
+        .order_by(CaregiverApplication.created_at.desc())
+        .first()
+    )
+    if not application:
+        raise ApiError(
+            "Ø¯Ø±Ø®ÙˆØ§Ø³Øª Ù‡Ù…Ú©Ø§Ø±ÛŒ Ù¾ÛŒØ¯Ø§ Ù†Ø´Ø¯.",
+            404,
+            "caregiver_application_not_found",
+        )
+    try:
+        updated = update_caregiver_application(
+            application,
+            payload or {},
+            request.files.getlist("certificateFiles"),
+        )
+    except Exception:
+        db.session.rollback()
+        raise
+    return success(updated.to_dict())
 
 
 @bp.get("/<int:application_id>")
